@@ -1,0 +1,26 @@
+# 精确锁定版本：避免 pip 在新旧版本间回溯（本机网络下解析极慢）
+fastapi==0.115.12
+uvicorn==0.34.0
+sse-starlette==2.1.3
+pydantic==2.10.6
+python-dotenv==1.0.1
+httpx==0.28.1
+
+# ES 检索
+elasticsearch==8.17.1
+
+# 种子数据写入 MySQL
+pymysql==1.1.1
+
+# Embedding API（EMBEDDING_MODE=api 时）
+openai==1.68.2
+
+# Agent / LLM（langchain 0.3 稳定线，与 langchain-mcp-adapters 0.1.x 兼容）
+langchain-core==0.3.41
+langchain-openai==0.3.7
+langgraph==0.2.74
+langchain==0.3.20
+langchain-mcp-adapters==0.1.7
+
+# 可选：本地 embedding（EMBEDDING_MODE=local 时需要，含 torch 较大）
+# sentence-transformers==3.3.1
