@@ -1,0 +1,99 @@
+# Logs and runtime files
+*.log
+*.log.*
+logs/
+log/
+*.pid
+*.pid.lock
+*.seed
+hs_err_pid*
+replay_pid*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Dependencies and package-manager caches
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/cache/
+.yarn/install-state.gz
+.m2/
+.m2repo/
+
+# Python environments and caches
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build output and generated reports
+target/
+build/
+dist/
+out/
+coverage/
+*.tsbuildinfo
+.gradle/
+.cache/
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.local
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary and backup files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+
+# Compiled binaries and packaged artifacts
+*.class
+*.jar
+*.war
+*.ear
+*.dll
+*.exe
+*.so
+*.dylib
+*.zip
+*.tar
+*.gz
+
+# ===== 本项目专属 =====
+# 运行时上传目录（UploadController）
+backend-java/uploads/
+# 种子脚本生成的占位图（scripts/seed.py 可重新生成）
+frontend/public/seed-images/
+# 本地调试草稿区
+.piptest/
+# pnpm 元数据缓存（工作区内）
+.pnpm-cache/

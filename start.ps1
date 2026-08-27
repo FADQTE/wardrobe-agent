@@ -1,0 +1,49 @@
+# 潮引智能衣橱商城 Demo 一键启动脚本
+# 用法: 在项目根目录执行  .\start.ps1
+# 前提: Docker Desktop 运行中; JDK17 / Python3.10 / Node24 / pnpm 已安装
+
+$ErrorActionPreference = 'Continue'
+$root = $PSScriptRoot
+
+Write-Host '== 1/5 启动基础设施 (MySQL + Elasticsearch) ==' -ForegroundColor Cyan
+docker compose up -d
+if ($LASTEXITCODE -ne 0) { Write-Host 'docker compose 失败，请确认 Docker Desktop 已启动' -ForegroundColor Red; exit 1 }
+
+Write-Host '== 2/5 等待 MySQL / ES 就绪 ==' -ForegroundColor Cyan
+$ready = $false
+foreach ($i in 1..60) {
+    $mysqlOk = $false; $esOk = $false
+    try { $mysqlOk = (Test-NetConnection -ComputerName localhost -Port 3307 -InformationLevel Quiet -WarningAction SilentlyContinue) } catch {}
+    try { $r = Invoke-WebRequest -Uri 'http://localhost:9200/_cluster/health' -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop; $esOk = ($r.StatusCode -eq 200) } catch {}
+    if ($mysqlOk -and $esOk) { $ready = $true; break }
+    Write-Host "  等待中... ($i/60)" -ForegroundColor DarkGray
+    Start-Sleep -Seconds 3
+}
+if (-not $ready) { Write-Host '基础设施未就绪，请检查 docker compose ps' -ForegroundColor Red; exit 1 }
+Write-Host '  基础设施就绪' -ForegroundColor Green
+
+Write-Host '== 3/5 准备 Agent 环境 (venv + 依赖 + 种子数据) ==' -ForegroundColor Cyan
+if (-not (Test-Path "$root\agent-python\.venv")) {
+    Write-Host '  创建 venv 并安装依赖（阿里云镜像，首次约 1-2 分钟）...' -ForegroundColor DarkGray
+    Set-Location "$root\agent-python"
+    python -m venv .venv
+    .\.venv\Scripts\python.exe -m pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ --disable-pip-version-check --only-binary=:all:
+    if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+    Set-Location $root
+}
+# 种子数据幂等，每次启动刷新演示数据（可注释跳过）
+Write-Host '  写入种子数据 (200 商品 / 44 规则 / 14 衣橱)...' -ForegroundColor DarkGray
+& "$root\agent-python\.venv\Scripts\python.exe" "$root\scripts\seed.py"
+
+Write-Host '== 4/5 启动后端服务 (Spring Boot :8080 / Agent :8000 / Netty WS :8090) ==' -ForegroundColor Cyan
+Start-Process powershell -ArgumentList '-NoExit','-Command',"`$env:JAVA_HOME='D:\jdk17'; Set-Location '$root\backend-java'; mvn -s '$root\.mvn\settings.xml' spring-boot:run"
+Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$root\agent-python'; .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+Write-Host '== 5/5 启动前端 (Vite :5173) ==' -ForegroundColor Cyan
+Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$root\frontend'; pnpm dev"
+
+Write-Host ''
+Write-Host '完成! 打开 http://localhost:5173' -ForegroundColor Green
+Write-Host '  后端健康: http://localhost:8080/api/health' -ForegroundColor DarkGray
+Write-Host '  Agent健康: http://localhost:8000/health' -ForegroundColor DarkGray
+Write-Host '  Netty WS:  ws://localhost:8090/ws/chat' -ForegroundColor DarkGray
