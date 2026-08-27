@@ -1,0 +1,33 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: chaoyin-mall
+  datasource:
+    url: jdbc:mysql://localhost:3307/chaoyin?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  ai:
+    mcp:
+      server:
+        name: chaoyin-mall-mcp
+        version: 0.1.0
+        type: SYNC
+        sse-endpoint: /mcp/sse
+        sse-message-endpoint: /mcp/message
+
+chaoyin:
+  agent-url: http://localhost:8000
+  netty:
+    port: 8090
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+logging:
+  level:
+    com.chaoyin: info
