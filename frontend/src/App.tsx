@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { ConfigProvider, Layout, Menu, Avatar, message } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import {
@@ -29,7 +29,10 @@ const menuItems = [
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
-  const [current, setCurrent] = useState(window.location.pathname || '/chat')
+  const location = useLocation()
+  const navigate = useNavigate()
+  // 当前菜单项 = 当前 URL 路径（刷新/前进后退/直接输入 URL 均保持一致）
+  const current = location.pathname
 
   useEffect(() => {
     login('demo', 'demo123')
@@ -49,7 +52,7 @@ export default function App() {
               mode="inline"
               selectedKeys={[current]}
               items={menuItems}
-              onClick={(e) => setCurrent(e.key)}
+              onClick={({ key }) => navigate(key)}
             />
           </Sider>
           <Layout>
@@ -72,15 +75,13 @@ export default function App() {
               </span>
             </Header>
             <Content style={{ padding: 16, overflow: 'auto' }}>
-              <BrowserRouter>
-                <Routes>
-                  <Route path="/" element={<Navigate to="/chat" replace />} />
-                  <Route path="/chat" element={<ChatPage />} />
-                  <Route path="/wardrobe" element={<WardrobePage />} />
-                  <Route path="/mall" element={<MallPage />} />
-                  <Route path="/rules" element={<RulesPage />} />
-                </Routes>
-              </BrowserRouter>
+              <Routes>
+                <Route path="/" element={<Navigate to="/chat" replace />} />
+                <Route path="/chat" element={<ChatPage />} />
+                <Route path="/wardrobe" element={<WardrobePage />} />
+                <Route path="/mall" element={<MallPage />} />
+                <Route path="/rules" element={<RulesPage />} />
+              </Routes>
             </Content>
           </Layout>
         </Layout>

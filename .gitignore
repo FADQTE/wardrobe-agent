@@ -97,3 +97,6 @@ frontend/public/seed-images/
 .piptest/
 # pnpm 元数据缓存（工作区内）
 .pnpm-cache/
+
+
+xiaozhe-agent/
