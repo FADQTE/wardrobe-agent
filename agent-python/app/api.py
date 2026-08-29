@@ -151,6 +151,7 @@ async def chat(req: ChatRequest):
         try:
             memory = SessionMemory(req.session_id, req.user_id)
             await memory.load()
+            await memory.load_long_term(req.message)
             # 先落会话和用户消息：即使用户立刻切换页面，后台仍可完成本轮并供前端恢复。
             await memory.save(title=req.message.strip()[:60] if not memory.exists else None)
             await memory.append_message("user", req.message)
@@ -293,6 +294,68 @@ async def product_search(
 
 class ReindexRequest(BaseModel):
     rule_id: int
+
+
+@router.post("/internal/memory/fullsync")
+async def memory_fullsync():
+    """兜底：从 MySQL 全量同步 active 记忆到 ES memory_index（索引只是检索层，MySQL 是事实源）。"""
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{config.JAVA_API_URL}/memory/list",
+                            params={"status": "active", "limit": 200})
+            r.raise_for_status()
+            rows = r.json().get("data") or []
+        es = get_es()
+        if not es.es.indices.exists(index=config.MEMORY_INDEX):
+            es.es.indices.create(index=config.MEMORY_INDEX, body=_memory_mapping(es))
+        docs = []
+        for row in rows:
+            content = row.get("content") or ""
+            doc = {
+                "user_id": str(row.get("userId") or ""),
+                "memory_type": row.get("memoryType") or "episode",
+                "predicate": row.get("predicate") or "",
+                "content": content,
+                "importance": row.get("importance"),
+                "confidence": row.get("confidence"),
+                "status": "active",
+                "created_at": _es_dt(str(row.get("createdAt") or "").replace("T", " ")),
+            }
+            if content:
+                docs.append(doc)
+        if docs and es.index_has_vector(config.MEMORY_INDEX):
+            vectors = es.embed([d["content"] for d in docs])
+            dims = es.vector_dims(config.MEMORY_INDEX)
+            if vectors and len(vectors) == len(docs) and all(
+                    not dims or len(v) == dims for v in vectors):
+                for doc, vector in zip(docs, vectors):
+                    doc["embedding"] = vector
+        for row, doc in zip(rows, docs):
+            if not doc.get("content"):
+                continue
+            es.es.index(index=config.MEMORY_INDEX, id=str(row.get("id")), document=doc)
+        if docs:
+            es.es.refresh(index=config.MEMORY_INDEX)
+        return {"code": 0, "msg": f"memory fullsync {len(docs)} docs, "
+                f"vector={'ok' if any('embedding' in d for d in docs) else 'skipped'}"}
+    except Exception as e:
+        return {"code": 500, "msg": f"memory fullsync 失败: {e}"}
+
+
+def _memory_mapping(es) -> dict:
+    dims = es.vector_dims(config.PRODUCT_INDEX) or config.EMBEDDING_DIM
+    props = {
+        "user_id": {"type": "keyword"}, "memory_type": {"type": "keyword"},
+        "predicate": {"type": "keyword"},
+        "content": {"type": "text", "analyzer": "standard"},
+        "importance": {"type": "float"}, "confidence": {"type": "float"},
+        "status": {"type": "keyword"}, "created_at": {"type": "date"},
+    }
+    if config.EMBEDDING_MODE != "none":
+        props["embedding"] = {"type": "dense_vector", "dims": dims,
+                              "index": True, "similarity": "cosine"}
+    return {"settings": {"number_of_shards": 1, "number_of_replicas": 0},
+            "mappings": {"properties": props}}
 
 
 @router.post("/eval/run")

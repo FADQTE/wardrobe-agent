@@ -9,7 +9,10 @@
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import re
+from datetime import datetime, timezone
 
 import httpx
 
@@ -160,10 +163,116 @@ async def store_candidates(user_id: int, candidates: list[dict], source_id: str 
                 results.append({"predicate": item["predicate"], "action": body.get("action")})
                 print(f"[long-memory] stored {item['memory_type']}/{item['predicate']}"
                       f"={item['value']} action={body.get('action')}", flush=True)
+                memory_id = (body.get("memory") or {}).get("id")
+                if memory_id:
+                    await _index_to_es(memory_id, item, user_id)
         except Exception as e:
             # 写入失败只影响记忆积累，不能影响当轮对话
             print(f"[long-memory] store failed: {e}", flush=True)
     return results
+
+
+async def _index_to_es(memory_id, item: dict, user_id: int):
+    """MySQL 是事实源，ES memory_index 只作检索索引；向量不可用时只建 BM25 文档。"""
+    try:
+        from .es_client import get_es
+        es = get_es()
+        if not es.es.indices.exists(index=config.MEMORY_INDEX):
+            return
+        doc = {
+            "user_id": str(user_id),
+            "memory_type": item["memory_type"],
+            "predicate": item["predicate"],
+            "content": item.get("content") or "",
+            "importance": item.get("importance"),
+            "confidence": item.get("confidence"),
+            "status": "active",
+            "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        if es.index_has_vector(config.MEMORY_INDEX):
+            vectors = es.embed([doc["content"]])
+            dims = es.vector_dims(config.MEMORY_INDEX)
+            if vectors and vectors[0] and (not dims or len(vectors[0]) == dims):
+                doc["embedding"] = vectors[0]
+        await asyncio.to_thread(
+            es.es.index, index=config.MEMORY_INDEX, id=str(memory_id), document=doc)
+    except Exception as e:
+        print(f"[long-memory] es index failed: {e}", flush=True)
+
+
+# ---------- 读取路径 ----------
+
+# 意图路由：只有回溯历史的提问才召回情景记忆（文档 §14，避免每轮全量搜记忆）
+EPISODIC_TRIGGERS = re.compile(
+    r"上次|上回|之前|以前|历史|买过|曾经|推荐过|说过|那次|上一次"
+)
+
+
+def wants_episodic_recall(message: str) -> bool:
+    return bool(EPISODIC_TRIGGERS.search(message or ""))
+
+
+async def fetch_facts(user_id: int) -> list[dict]:
+    """结构化事实/偏好：MySQL 精确查询（能精确查就不模糊搜），失败静默为空。"""
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            r = await c.get(f"{config.JAVA_API_URL}/memory/facts", params={"userId": user_id})
+            r.raise_for_status()
+            return r.json().get("data") or []
+    except Exception as e:
+        print(f"[long-memory] facts fetch failed: {e}", flush=True)
+        return []
+
+
+def search_episodes(query: str, user_id: int, size: int = 4) -> list[dict]:
+    """情景记忆混合召回（同步，调用方需在线程池中执行）。"""
+    from .rag import hybrid_memory_search
+    try:
+        return hybrid_memory_search(query, user_id, size=size, memory_types=["episode"])
+    except Exception as e:
+        print(f"[long-memory] episode search failed: {e}", flush=True)
+        return []
+
+
+def touch_memories(memory_ids: list):
+    """召回被使用的记忆回写访问证据，供遗忘衰减计算 Memory Strength（后台执行）。"""
+
+    async def run():
+        for memory_id in memory_ids:
+            try:
+                async with httpx.AsyncClient(timeout=5) as c:
+                    await c.post(f"{config.JAVA_API_URL}/memory/{memory_id}/access")
+            except Exception:
+                pass
+
+    return asyncio.create_task(run())
+
+
+def render_facts(rows: list[dict]) -> str:
+    """事实渲染成紧凑上下文；非用户明确来源必须带（推断）标记（文档 §18）。"""
+    lines = []
+    for row in rows[:8]:
+        value = row.get("value")
+        if isinstance(value, str) and value:
+            try:
+                parsed = json.loads(value)
+                value = parsed if not isinstance(parsed, str) else parsed
+            except (TypeError, ValueError):
+                pass
+        if isinstance(value, dict):
+            value = json.dumps(value, ensure_ascii=False)
+        marker = "" if row.get("sourceType") == SOURCE_EXPLICIT else "（推断）"
+        lines.append(f"{row.get('predicate')}={value}{marker}")
+    return "；".join(lines)
+
+
+def render_episodes(rows: list[dict]) -> str:
+    lines = []
+    for row in rows[:4]:
+        content = " ".join(str(row.get("content") or "").split())[:120]
+        created = str(row.get("createdAt") or "")[:10]
+        lines.append(f"- {content}（{created}）")
+    return "\n".join(lines)
 
 
 async def capture_round(user_id: int, user_message: str, assistant_text: str,

@@ -83,7 +83,10 @@ public class MemoryService {
     }
 
     public List<AgentMemory> list(Long userId, String memoryType, String status, int limit) {
-        QueryWrapper<AgentMemory> qw = new QueryWrapper<AgentMemory>().eq("user_id", userId);
+        QueryWrapper<AgentMemory> qw = new QueryWrapper<AgentMemory>();
+        if (userId != null) {
+            qw.eq("user_id", userId);
+        }
         if (memoryType != null && !memoryType.isBlank()) {
             qw.eq("memory_type", memoryType);
         }

@@ -400,7 +400,10 @@ async def assemble_node(state: AgentState) -> dict:
     events.append({"type": "memory", "data": {"memory": {
         "persona": mem.get("persona"), "selected_items": [i.get("name") for i in mem.get("selected_items", [])],
         "candidates": [c.get("name") for c in mem.get("candidates", [])],
-        "last_image": mem.get("last_image"), "clarify_count": mem.get("clarify_count")}}})
+        "last_image": mem.get("last_image"), "clarify_count": mem.get("clarify_count"),
+        "long_term_facts": len(getattr(memory, "long_facts", []) or []),
+        "episodic_recalled": len(getattr(memory, "episodic", []) or []),
+    }}})
     return {"final_text": text, "events": events}
 
 

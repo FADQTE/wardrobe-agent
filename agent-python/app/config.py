@@ -56,3 +56,4 @@ TRYON_POLL_TIMEOUT = float(os.getenv("TRYON_POLL_TIMEOUT", "180"))
 
 PRODUCT_INDEX = "product_index"
 RULE_INDEX = "rule_index"
+MEMORY_INDEX = "memory_index"

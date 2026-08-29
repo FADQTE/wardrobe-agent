@@ -111,5 +111,43 @@ class RuleIndexUpdateTests(unittest.TestCase):
         self.assertEqual("published", docs[1]["publish_status"])
 
 
+class MemoryHybridSearchTests(unittest.TestCase):
+    def test_memory_search_filters_user_and_active_and_excludes_embedding(self):
+        class RawEs:
+            def __init__(self):
+                self.search_bodies = []
+
+            def search(self, *, index, body):
+                self.search_bodies.append(body)
+                return {"hits": {"hits": []}}
+
+        class FakeEs:
+            def __init__(self):
+                self.es = RawEs()
+
+            def index_has_vector(self, index):
+                return True
+
+            def vector_dims(self, index):
+                return 3
+
+            def embed(self, texts):
+                return [[0.1, 0.2, 0.3]]
+
+        fake = FakeEs()
+        with patch("app.rag.get_es", return_value=fake):
+            memories = rag.hybrid_memory_search("上次买的鞋", user_id=7, size=4,
+                                                memory_types=["episode"])
+
+        self.assertEqual([], memories)
+        for body in fake.es.search_bodies:
+            if "query" in body:  # BM25 路的过滤条件
+                filters = body["query"]["bool"]["filter"]
+                self.assertIn({"term": {"user_id": "7"}}, filters)
+                self.assertIn({"term": {"status": "active"}}, filters)
+                self.assertIn({"terms": {"memory_type": ["episode"]}}, filters)
+            self.assertEqual({"excludes": ["embedding"]}, body["_source"])
+
+
 if __name__ == "__main__":
     unittest.main()

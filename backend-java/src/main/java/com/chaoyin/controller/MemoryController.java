@@ -54,7 +54,7 @@ public class MemoryController {
     }
 
     @GetMapping("/list")
-    public ApiResponse<List<AgentMemory>> list(@RequestParam Long userId,
+    public ApiResponse<List<AgentMemory>> list(@RequestParam(required = false) Long userId,
                                                @RequestParam(required = false) String memoryType,
                                                @RequestParam(defaultValue = "active") String status,
                                                @RequestParam(defaultValue = "50") int limit) {

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""长期记忆写入管线测试：规则门控 / 白名单 / 置信度分级 / 低价值丢弃。"""
+"""长期记忆管线测试：写入门控/白名单/置信度分级 + 读取路由/渲染。"""
 import unittest
 
 from app import long_memory as lm
@@ -64,6 +64,37 @@ class NormalizeTests(unittest.TestCase):
              "source": "user_explicit", "confidence": 1.0, "importance": 0.8},
         ])
         self.assertEqual([], out)
+
+
+class ReadPathTests(unittest.TestCase):
+    def test_episodic_recall_only_for_history_questions(self):
+        self.assertTrue(lm.wants_episodic_recall("我上次买的那件外套叫什么？"))
+        self.assertTrue(lm.wants_episodic_recall("之前给你们反馈过质量问题"))
+        self.assertFalse(lm.wants_episodic_recall("推荐一件通勤外套"))
+        self.assertFalse(lm.wants_episodic_recall(""))
+
+    def test_render_facts_marks_non_explicit_sources(self):
+        rendered = lm.render_facts([
+            {"predicate": "size_top", "value": "\"L\"", "sourceType": "user_explicit"},
+            {"predicate": "preferred_color", "value": "\"黑色\"", "sourceType": "agent_inference"},
+            {"predicate": "budget", "value": "{\"min\":0,\"max\":1000}", "sourceType": "user_explicit"},
+        ])
+        self.assertIn("size_top=L", rendered)
+        self.assertIn("preferred_color=黑色（推断）", rendered)
+        budget = rendered.split("budget=")[1]
+        self.assertIn('"min": 0', budget)
+        self.assertIn('"max": 1000', budget)
+
+    def test_render_facts_empty_is_blank(self):
+        self.assertEqual("", lm.render_facts([]))
+
+    def test_render_episodes_truncates_and_dates(self):
+        rendered = lm.render_episodes([
+            {"content": "用户曾为父亲挑选外套，预算 500 元。" + "长" * 200,
+             "createdAt": "2026-08-29T10:00:00+08:00"},
+        ])
+        self.assertTrue(rendered.startswith("- 用户曾为父亲挑选外套"))
+        self.assertIn("2026-08-29", rendered)
 
 
 if __name__ == "__main__":

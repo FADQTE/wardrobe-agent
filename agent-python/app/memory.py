@@ -28,6 +28,10 @@ class SessionMemory:
         self.exists = False
         # 最近对话只用于当轮上下文，不写回 session state，避免与 chat_message 重复持久化。
         self.recent_messages: list[dict] = []
+        # 长期记忆（当轮读取视图，不入 session state）：事实走 MySQL 精确查询，
+        # 情景走 ES 混合召回，均为 user_id 隔离。
+        self.long_facts: list[dict] = []
+        self.episodic: list[dict] = []
 
     async def load(self):
         try:
@@ -54,6 +58,18 @@ class SessionMemory:
                     ]
         except Exception:
             pass
+
+    async def load_long_term(self, message: str):
+        """按意图路由读取长期记忆：事实常载（小而准），情景记忆仅历史回溯类提问召回。"""
+        from . import long_memory
+        self.long_facts = await long_memory.fetch_facts(self.user_id)
+        if long_memory.wants_episodic_recall(message):
+            rows = await asyncio.to_thread(
+                long_memory.search_episodes, message, self.user_id, 4)
+            self.episodic = rows
+            used = [r.get("id") for r in rows if r.get("id")]
+            if used:
+                long_memory.touch_memories(used)
 
     async def save(self, title: str | None = None):
         try:
@@ -107,6 +123,7 @@ class SessionMemory:
 
     def describe(self) -> str:
         """把记忆压缩成给 LLM 的上下文描述。"""
+        from . import long_memory
         parts = []
         if self.recent_messages:
             dialogue = []
@@ -115,6 +132,14 @@ class SessionMemory:
                 content = " ".join(str(row["content"]).split())[:240]
                 dialogue.append(f"{role}: {content}")
             parts.append("最近对话（按时间顺序）:\n" + "\n".join(dialogue))
+        if self.long_facts:
+            facts = long_memory.render_facts(self.long_facts)
+            if facts:
+                parts.append(f"用户长期记忆（事实/偏好）: {facts}")
+        if self.episodic:
+            episodes = long_memory.render_episodes(self.episodic)
+            if episodes:
+                parts.append("相关历史记忆（仅线索，实时状态以业务系统为准）:\n" + episodes)
         if self.state["persona"]:
             p = self.state["persona"]
             parts.append(f"用户形象: {p}")

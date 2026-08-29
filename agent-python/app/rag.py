@@ -341,3 +341,35 @@ def rule_time_valid(source: dict) -> bool:
         if now > value:
             return False
     return True
+
+
+def hybrid_memory_search(query: str, user_id: int, size: int = 5,
+                         memory_types: Optional[list[str]] = None) -> list[dict]:
+    """长期记忆混合召回：仅限当前用户的 active 记忆，BM25/kNN 双路 + 加权 RRF。
+
+    边界：user_id + status 在两路中一致过滤；索引/向量不可用时安全降级 BM25。
+    """
+    filters = [{"term": {"user_id": str(user_id)}}, {"term": {"status": "active"}}]
+    if memory_types:
+        filters.append({"terms": {"memory_type": memory_types}})
+    window = max(config.HYBRID_CANDIDATE_WINDOW, size)
+    must = [{"match": {"content": {"query": query}}}]
+    lexical = _lexical_search(config.MEMORY_INDEX, must, filters, window)
+    lexical_hits = list(lexical["hits"]["hits"])
+    vector_hits, vector_state = _vector_search(config.MEMORY_INDEX, query, filters, window)
+    entries = _rrf_fuse(lexical_hits, vector_hits, size=size)
+    mode = _retrieval_mode(lexical_hits, vector_hits)
+    memories = []
+    for entry in entries:
+        source = _entry_source(entry)
+        memories.append({
+            "id": int(entry["hit"]["_id"]),
+            "memoryType": source.get("memory_type"), "predicate": source.get("predicate"),
+            "content": source.get("content"), "importance": source.get("importance"),
+            "confidence": source.get("confidence"), "createdAt": source.get("created_at"),
+            "score": entry["rrfScore"] if mode == "hybrid_rrf" else
+                     (entry["lexicalScore"] or entry["vectorScore"]),
+            "retrievalMode": mode, "retrievalChannels": entry["retrievalChannels"],
+            "vectorState": vector_state,
+        })
+    return memories

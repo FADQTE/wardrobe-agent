@@ -73,9 +73,9 @@ class EsClient:
         return self.index_has_vector(config.PRODUCT_INDEX)
 
     def index_status(self) -> dict:
-        """返回双索引的文档数、向量覆盖数与 Mapping 状态，供健康页验收。"""
+        """返回三索引的文档数、向量覆盖数与 Mapping 状态，供健康页验收。"""
         result = {}
-        for index in (config.PRODUCT_INDEX, config.RULE_INDEX):
+        for index in (config.PRODUCT_INDEX, config.RULE_INDEX, config.MEMORY_INDEX):
             try:
                 exists = bool(self.es.indices.exists(index=index))
                 if not exists:
