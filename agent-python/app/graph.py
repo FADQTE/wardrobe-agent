@@ -380,11 +380,26 @@ async def assemble_node(state: AgentState) -> dict:
         # 降级转人工：关键事实不可用时不猜答案
         text = f"抱歉，当前服务暂时无法完成本次查询（{state['handoff']}）。已为你转接人工客服，请稍候。"
     elif state["intent_data"].get("needsClarification"):
-        text = state["intent_data"].get("clarifyQuestion") or "可以补充一点信息吗？"
-        if memory:
-            memory.state["clarify_count"] += 1
-        events.append({"type": "status", "data": {
-            "text": "等待用户补充信息（澄清最多 2 轮后兜底引导）", "stage": "clarify"}})
+        clarify_done = int(memory.state.get("clarify_count") or 0) if memory else 0
+        if clarify_done >= 2:
+            # 兜底引导：连续澄清 2 轮仍未命中，不再追问，列出能力菜单让用户选
+            text = ("我先说一下我能帮你做的事，你直接挑一个：\n\n"
+                    "- **穿搭推荐**：告诉我场景（通勤 / 约会 / 面试…），我会结合你的衣橱和商城在售单品出搭配\n"
+                    "- **虚拟试穿**：选定搭配后一键生成效果图\n"
+                    "- **订单 / 物流 / 售后**：查订单、查快递、看退换货政策与进度\n"
+                    "- **优惠活动**：查当前生效的满减和折扣\n\n"
+                    "也可以直接说，比如「帮我搭配一套秋日通勤装」或「查一下我的订单」。")
+            if memory:
+                memory.state["clarify_count"] = 0
+            events.append({"type": "status", "data": {
+                "text": "连续澄清 2 轮未命中，转入能力引导", "stage": "clarify"}})
+        else:
+            text = state["intent_data"].get("clarifyQuestion") or "可以补充一点信息吗？"
+            if memory:
+                memory.state["clarify_count"] = clarify_done + 1
+            events.append({"type": "status", "data": {
+                "text": f"等待用户补充信息（第 {clarify_done + 1}/2 轮澄清，超限转能力引导）",
+                "stage": "clarify"}})
     else:
         text = _compose_commerce_support(state)
         if text is None:

@@ -19,6 +19,16 @@ from . import long_memory
 
 router = APIRouter()
 
+# 同一会话串行锁：session state 是整包读改写，并发轮次会互相覆盖
+_session_locks: dict[str, asyncio.Lock] = {}
+
+
+def _session_lock(session_id: str) -> asyncio.Lock:
+    lock = _session_locks.get(session_id)
+    if lock is None:
+        lock = _session_locks[session_id] = asyncio.Lock()
+    return lock
+
 
 class ChatRequest(BaseModel):
     session_id: str
@@ -148,6 +158,11 @@ async def chat(req: ChatRequest):
     async def gen():
         memory = None
         assistant_saved = False
+        lock = _session_lock(req.session_id)
+        if lock.locked():
+            yield _sse({"type": "status", "data": {
+                "text": "同一会话的上一轮请求仍在处理中，本轮已排队…", "stage": "session"}})
+        await lock.acquire()
         try:
             memory = SessionMemory(req.session_id, req.user_id)
             await memory.load()
@@ -265,6 +280,8 @@ async def chat(req: ChatRequest):
                 except Exception:
                     pass
             yield _sse({"type": "error", "data": {"text": error_text}})
+        finally:
+            lock.release()
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive",

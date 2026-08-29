@@ -306,9 +306,9 @@ def hybrid_rule_search(query: str, tags: Optional[list[str]] = None,
         must = [{"multi_match": {
             "query": query, "fields": ["title^3", "content"], "type": "best_fields",
         }}]
-        lexical = _lexical_search(config.RULE_INDEX, must, filters, window)
+        lexical, vector_hits, vector_state = _dual_recall(
+            config.RULE_INDEX, must, filters, query, window)
         lexical_hits = list(lexical["hits"]["hits"])
-        vector_hits, vector_state = _vector_search(config.RULE_INDEX, query, filters, window)
         entries = _rrf_fuse(lexical_hits, vector_hits, size=size)
         mode = _retrieval_mode(lexical_hits, vector_hits)
     else:
@@ -386,9 +386,9 @@ def hybrid_memory_search(query: str, user_id: int, size: int = 5,
         filters.append({"terms": {"memory_type": memory_types}})
     window = max(config.HYBRID_CANDIDATE_WINDOW, size)
     must = [{"match": {"content": {"query": query}}}]
-    lexical = _lexical_search(config.MEMORY_INDEX, must, filters, window)
+    lexical, vector_hits, vector_state = _dual_recall(
+        config.MEMORY_INDEX, must, filters, query, window)
     lexical_hits = list(lexical["hits"]["hits"])
-    vector_hits, vector_state = _vector_search(config.MEMORY_INDEX, query, filters, window)
     entries = _rrf_fuse(lexical_hits, vector_hits, size=size)
     mode = _retrieval_mode(lexical_hits, vector_hits)
     memories = []

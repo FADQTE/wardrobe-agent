@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -11,6 +12,9 @@ def hit(doc_id, score, **source):
 
 
 class RrfFusionTests(unittest.TestCase):
+    def setUp(self):
+        rag.invalidate_cache()
+
     def test_document_present_in_both_channels_wins_fusion(self):
         lexical = [hit(1, 8.0, name="lexical-only"), hit(2, 5.0, name="both")]
         vector = [hit(3, 0.91, name="vector-only"), hit(2, 0.85, name="both")]
@@ -37,6 +41,102 @@ class RrfFusionTests(unittest.TestCase):
         self.assertFalse(any("embedding" in product for product in result["products"]))
         semantic = next(product for product in result["products"] if product["id"] == 9)
         self.assertEqual(["knn"], semantic["retrievalChannels"])
+
+
+class DualRecallParallelismTests(unittest.TestCase):
+    def test_both_channels_run_concurrently(self):
+        # Barrier(2)：两路都到达才放行。若双路退化为串行，先到的一路会等超时报错。
+        barrier = threading.Barrier(2, timeout=10)
+
+        def fake_lexical(*args, **kwargs):
+            barrier.wait()
+            return {"hits": {"hits": [], "total": {"value": 0}}}
+
+        def fake_vector(*args, **kwargs):
+            barrier.wait()
+            return [], "ok"
+
+        with patch("app.rag._lexical_search", side_effect=fake_lexical), \
+                patch("app.rag._vector_search", side_effect=fake_vector):
+            lexical, vector_hits, state = rag._dual_recall(
+                "product_index", [], [], "通勤", 10)
+
+        self.assertEqual("ok", state)
+        self.assertEqual([], vector_hits)
+        self.assertEqual(0, lexical["hits"]["total"]["value"])
+
+    def test_lexical_failure_still_propagates(self):
+        def broken_lexical(*args, **kwargs):
+            raise RuntimeError("es down")
+
+        with patch("app.rag._lexical_search", side_effect=broken_lexical), \
+                patch("app.rag._vector_search", return_value=([], "ok")):
+            with self.assertRaises(RuntimeError):
+                rag._dual_recall("product_index", [], [], "通勤", 10)
+
+
+class ProductSearchCacheTests(unittest.TestCase):
+    def setUp(self):
+        rag.invalidate_cache()
+        self.es_calls = 0
+
+    def _patch_channels(self, lexical_hits, vector_hits):
+        response = {"hits": {"hits": lexical_hits, "total": {"value": len(lexical_hits)}}}
+
+        def fake_lexical(*args, **kwargs):
+            self.es_calls += 1
+            return response
+
+        def fake_vector(*args, **kwargs):
+            self.es_calls += 1
+            return list(vector_hits), "ok"
+
+        return patch("app.rag._lexical_search", side_effect=fake_lexical), \
+            patch("app.rag._vector_search", side_effect=fake_vector)
+
+    def test_second_identical_search_served_from_cache(self):
+        lexical_patch, vector_patch = self._patch_channels(
+            [hit(1, 7.0, name="衬衫")], [hit(2, 0.9, name="语义衬衫")])
+        with lexical_patch, vector_patch:
+            first = rag.hybrid_product_search(keyword="衬衫", size=5)
+            second = rag.hybrid_product_search(keyword="衬衫", size=5)
+
+        self.assertEqual(2, self.es_calls)  # 双路各 1 次，第二次请求零 ES 调用
+        self.assertEqual([p["id"] for p in first["products"]],
+                         [p["id"] for p in second["products"]])
+        self.assertEqual(first["retrieval"]["mode"], second["retrieval"]["mode"])
+
+    def test_different_params_get_separate_cache_entries(self):
+        lexical_patch, vector_patch = self._patch_channels(
+            [hit(1, 7.0, name="衬衫")], [])
+        with lexical_patch, vector_patch:
+            rag.hybrid_product_search(keyword="衬衫", size=5)
+            rag.hybrid_product_search(keyword="外套", size=5)
+
+        self.assertEqual(4, self.es_calls)
+
+    def test_invalidate_cache_forces_new_es_calls(self):
+        lexical_patch, vector_patch = self._patch_channels(
+            [hit(1, 7.0, name="衬衫")], [])
+        with lexical_patch, vector_patch:
+            rag.hybrid_product_search(keyword="衬衫", size=5)
+            rag.invalidate_cache()
+            rag.hybrid_product_search(keyword="衬衫", size=5)
+
+        self.assertEqual(4, self.es_calls)
+
+    def test_caller_mutation_does_not_poison_cached_result(self):
+        # 模拟 api 层就地改写返回值（rerank 后覆盖 products、置 reranked=True）
+        lexical_patch, vector_patch = self._patch_channels(
+            [hit(1, 7.0, name="衬衫")], [hit(2, 0.9, name="语义衬衫")])
+        with lexical_patch, vector_patch:
+            first = rag.hybrid_product_search(keyword="衬衫", size=5)
+            first["reranked"] = True
+            first["products"].clear()
+            second = rag.hybrid_product_search(keyword="衬衫", size=5)
+
+        self.assertFalse(second.get("reranked", False))
+        self.assertEqual([1, 2], [p["id"] for p in second["products"]])
 
 
 class KnnQueryTests(unittest.TestCase):

@@ -63,8 +63,9 @@ class SessionMemory:
                     rows = [row for row in rows
                             if row.get("role") in ("user", "assistant") and row.get("content")]
                     await self._compress_history(rows)
-        except Exception:
-            pass
+        except Exception as e:
+            # 加载失败等于本轮裸跑无记忆，必须留下日志证据而不是静默吞掉
+            print(f"[memory] load failed: {e}")
 
     async def _compress_history(self, rows: list[dict]):
         """滑动窗口 + 摘要：窗口外更早的新历史滚动合并进 conversation_summary。"""

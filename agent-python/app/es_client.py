@@ -13,6 +13,7 @@ class EsClient:
         from elasticsearch import Elasticsearch
         self.es = Elasticsearch(config.ES_URL)
         self._embedding_client = None
+        self._ollama_client = None
 
     def ping(self) -> bool:
         try:
@@ -27,10 +28,12 @@ class EsClient:
             return None
         if config.EMBEDDING_MODE == "ollama":
             try:
-                import httpx
-                resp = httpx.post(f"{config.OLLAMA_URL}/api/embed",
-                                  json={"model": config.EMBEDDING_MODEL, "input": texts},
-                                  timeout=120)
+                if self._ollama_client is None:
+                    import httpx
+                    self._ollama_client = httpx.Client(timeout=120)
+                resp = self._ollama_client.post(f"{config.OLLAMA_URL}/api/embed",
+                                                json={"model": config.EMBEDDING_MODEL,
+                                                      "input": texts})
                 resp.raise_for_status()
                 return resp.json()["embeddings"]
             except Exception as e:
