@@ -93,6 +93,14 @@ class SessionMemory:
                 self.state["selected_items"].append(it)
         self.state["selected_items"] = self.state["selected_items"][-8:]
 
+    def transcript(self, limit: int = 6) -> str:
+        """最近对话的紧凑转写，供长期记忆抽取提供上下文。"""
+        lines = []
+        for row in self.recent_messages[-limit:]:
+            role = "用户" if row["role"] == "user" else "助手"
+            lines.append(f"{role}: {' '.join(str(row['content']).split())[:160]}")
+        return "\n".join(lines)
+
     def set_candidates(self, outfit: dict):
         self.state["candidates"].append(outfit)
         self.state["candidates"] = self.state["candidates"][-5:]

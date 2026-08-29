@@ -15,6 +15,7 @@ from .es_client import get_es
 from .graph import build_graph
 from .mcp_client import get_mcp_tools
 from .memory import SessionMemory
+from . import long_memory
 
 router = APIRouter()
 
@@ -243,6 +244,11 @@ async def chat(req: ChatRequest):
             async for sse_line in emit({"type": "done", "data": {"reply": text, "sessionId": req.session_id}}):
                 yield sse_line
             await trace.wait()
+            # 长期记忆捕获：本轮结束后后台执行（抽取+治理落库），不阻塞响应收尾
+            if config.MEMORY_WRITE_ENABLED:
+                asyncio.create_task(long_memory.capture_round(
+                    req.user_id, req.message, text,
+                    recent_context=memory.transcript(), source_id=req.session_id))
         except Exception as e:
             import traceback
             traceback.print_exc()
