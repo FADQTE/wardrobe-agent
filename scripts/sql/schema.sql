@@ -111,6 +111,33 @@ CREATE TABLE IF NOT EXISTS favorite (
   UNIQUE KEY uk_user_product (user_id, product_id)
 ) ENGINE=InnoDB;
 
+-- Agent 长期记忆：episode(事件)/semantic(稳定事实)/profile(长期偏好)
+-- 写入治理：source_type 区分用户明确 vs 推断，supersedes 冲突链保留旧值可答性
+CREATE TABLE IF NOT EXISTS agent_memory (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  memory_type VARCHAR(16) NOT NULL COMMENT 'episode|semantic|profile',
+  subject VARCHAR(64) NOT NULL DEFAULT 'user' COMMENT '记忆主体：user|family 等',
+  predicate VARCHAR(64) NOT NULL COMMENT '结构化谓词（size/budget/color 等，episode 用 event 类型）',
+  value JSON,
+  content TEXT COMMENT '自然语言记忆原文（供 ES 检索/展示）',
+  importance FLOAT DEFAULT 0.5,
+  confidence FLOAT DEFAULT 0.5,
+  source_type VARCHAR(32) NOT NULL DEFAULT 'user_explicit' COMMENT 'user_explicit|user_behavior|agent_inference',
+  source_id VARCHAR(128),
+  scope JSON COMMENT '作用域：person/category/order 等，防局部信息升级为全局',
+  status VARCHAR(16) NOT NULL DEFAULT 'active' COMMENT 'active|superseded|archived|invalid',
+  supersedes_memory_id BIGINT,
+  access_count INT DEFAULT 0,
+  last_accessed_at DATETIME,
+  expires_at DATETIME,
+  decay_enabled TINYINT DEFAULT 1 COMMENT '用户明确高置信记忆=0，禁用自动衰减',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_user_pred (user_id, predicate, status),
+  INDEX idx_user_type (user_id, memory_type, status)
+) ENGINE=InnoDB;
+
 -- 会话记忆：state 存人物/选中单品/候选搭配 JSON
 CREATE TABLE IF NOT EXISTS chat_session (
   id VARCHAR(64) PRIMARY KEY,
