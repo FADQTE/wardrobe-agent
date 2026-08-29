@@ -46,6 +46,12 @@ JAVA_API_URL = os.getenv("JAVA_API_URL", "http://localhost:8080/api")
 # 长期记忆：写入管线开关（抽取+落库）；读取相关参数
 MEMORY_WRITE_ENABLED = os.getenv("MEMORY_WRITE_ENABLED", "true").lower() == "true"
 
+# 会话记忆压缩：历史超过阈值后，更早的对话 LLM 摘要化（Sliding Window + compressed summary）
+MEMORY_RECENT_TURNS = int(os.getenv("MEMORY_RECENT_TURNS", "8"))
+MEMORY_SUMMARY_THRESHOLD = int(os.getenv("MEMORY_SUMMARY_THRESHOLD", "12"))
+# 注入 prompt 的记忆区字符预算（CJK 1 字符≈1 token 的保守估算），超出按优先级丢弃
+MEMORY_DESC_MAX_CHARS = int(os.getenv("MEMORY_DESC_MAX_CHARS", "3000"))
+
 # 虚拟试衣：mock 使用本地预设结果；http 调用可配置的真实生图服务。
 TRYON_MODE = os.getenv("TRYON_MODE", "mock").strip().lower()
 TRYON_PROVIDER_URL = os.getenv("TRYON_PROVIDER_URL", "").strip()

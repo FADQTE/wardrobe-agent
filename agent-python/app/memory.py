@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Session Memory：人物形象/选中单品/候选搭配，落库到 Java 侧 chat_session。"""
+"""Session Memory：人物形象/选中单品/候选搭配，落库到 Java 侧 chat_session。
+
+会话记忆压缩（文档 §5/§17）：最近 N 轮保留原文，更早的历史滚动合并为
+conversation_summary 存入 state；注入 LLM 的记忆区按优先级做字符预算裁剪。
+"""
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 
 import httpx
@@ -17,13 +22,16 @@ DEFAULT_MEMORY = {
     "clarify_count": 0,
 }
 
+SUMMARY_SYSTEM = ("你是电商对话记忆压缩器。把历史对话合并成一段不超过 200 字的摘要，"
+                  "保留：用户需求/场景、身材尺码、预算、偏好、已完成的操作（下单/收藏/生图）、"
+                  "未决问题。丢弃寒暄和重复内容，只输出摘要正文。")
+
 
 class SessionMemory:
     def __init__(self, session_id: str, user_id: int):
         self.session_id = session_id
         self.user_id = user_id
         # 深拷贝：DEFAULT_MEMORY 的嵌套 list 不能跨会话共享（否则污染新会话）
-        import copy
         self.state = copy.deepcopy(DEFAULT_MEMORY)
         self.exists = False
         # 最近对话只用于当轮上下文，不写回 session state，避免与 chat_message 重复持久化。
@@ -37,7 +45,8 @@ class SessionMemory:
         try:
             async with httpx.AsyncClient(timeout=5) as c:
                 state_req = c.get(f"{config.JAVA_API_URL}/chat/sessions/{self.session_id}")
-                messages_req = c.get(f"{config.JAVA_API_URL}/chat/sessions/{self.session_id}/messages")
+                messages_req = c.get(f"{config.JAVA_API_URL}/chat/sessions/{self.session_id}/messages",
+                                     params={"limit": 200})
                 state_res, messages_res = await asyncio.gather(
                     state_req, messages_req, return_exceptions=True,
                 )
@@ -51,13 +60,30 @@ class SessionMemory:
                         self.state.update(json.loads(state))
                 if isinstance(messages_res, httpx.Response) and messages_res.status_code == 200:
                     rows = messages_res.json().get("data") or []
-                    self.recent_messages = [
-                        {"role": row.get("role"), "content": row.get("content") or ""}
-                        for row in rows[-8:]
-                        if row.get("role") in ("user", "assistant") and row.get("content")
-                    ]
+                    rows = [row for row in rows
+                            if row.get("role") in ("user", "assistant") and row.get("content")]
+                    await self._compress_history(rows)
         except Exception:
             pass
+
+    async def _compress_history(self, rows: list[dict]):
+        """滑动窗口 + 摘要：窗口外更早的新历史滚动合并进 conversation_summary。"""
+        recent_turns, threshold = config.MEMORY_RECENT_TURNS, config.MEMORY_SUMMARY_THRESHOLD
+        summary = self.state.get("conversation_summary") or ""
+        summary_upto = int(self.state.get("summary_upto_id") or 0)
+        new_rows = [row for row in rows if int(row.get("id") or 0) > summary_upto]
+        if len(new_rows) > recent_turns + threshold:
+            to_summarize = new_rows[:-recent_turns]
+            merged = await _summarize(summary, to_summarize)
+            if merged:
+                summary = merged
+                summary_upto = int(to_summarize[-1].get("id") or summary_upto)
+                self.state["conversation_summary"] = summary
+                self.state["summary_upto_id"] = summary_upto
+        self.recent_messages = [
+            {"id": row.get("id"), "role": row.get("role"), "content": row.get("content") or ""}
+            for row in new_rows[-recent_turns:]
+        ]
 
     async def load_long_term(self, message: str):
         """按意图路由读取长期记忆：事实常载（小而准），情景记忆仅历史回溯类提问召回。"""
@@ -122,36 +148,79 @@ class SessionMemory:
         self.state["candidates"] = self.state["candidates"][-5:]
 
     def describe(self) -> str:
-        """把记忆压缩成给 LLM 的上下文描述。"""
+        """把记忆压缩成给 LLM 的上下文描述，按优先级做字符预算裁剪。"""
         from . import long_memory
-        parts = []
+        # priority 越小越关键：预算不足时从大往小丢
+        parts: list[tuple[int, str]] = []
+        if self.state.get("conversation_summary"):
+            parts.append((4, f"更早对话摘要: {self.state['conversation_summary']}"))
         if self.recent_messages:
             dialogue = []
             for row in self.recent_messages:
                 role = "用户" if row["role"] == "user" else "助手"
                 content = " ".join(str(row["content"]).split())[:240]
                 dialogue.append(f"{role}: {content}")
-            parts.append("最近对话（按时间顺序）:\n" + "\n".join(dialogue))
+            parts.append((0, "最近对话（按时间顺序）:\n" + "\n".join(dialogue)))
         if self.long_facts:
             facts = long_memory.render_facts(self.long_facts)
             if facts:
-                parts.append(f"用户长期记忆（事实/偏好）: {facts}")
+                parts.append((1, f"用户长期记忆（事实/偏好）: {facts}"))
         if self.episodic:
             episodes = long_memory.render_episodes(self.episodic)
             if episodes:
-                parts.append("相关历史记忆（仅线索，实时状态以业务系统为准）:\n" + episodes)
+                parts.append((3, "相关历史记忆（仅线索，实时状态以业务系统为准）:\n" + episodes))
         if self.state["persona"]:
             p = self.state["persona"]
-            parts.append(f"用户形象: {p}")
+            parts.append((2, f"用户形象: {p}"))
         if self.state["selected_items"]:
             names = "、".join(i["name"] for i in self.state["selected_items"])
-            parts.append(f"已选单品: {names}")
+            parts.append((2, f"已选单品: {names}"))
         if self.state["candidates"]:
             last = self.state["candidates"][-1]
-            parts.append(f"上一套候选搭配: {last.get('name')}（{len(last.get('items', []))} 件）")
+            parts.append((2, f"上一套候选搭配: {last.get('name')}（{len(last.get('items', []))} 件）"))
         if self.state["last_image"]:
-            parts.append(f"已生成效果图: {self.state['last_image'].get('label')}")
-        return "\n".join(parts) or "（暂无记忆）"
+            parts.append((2, f"已生成效果图: {self.state['last_image'].get('label')}"))
+        return _apply_budget(parts, config.MEMORY_DESC_MAX_CHARS)
+
+
+def _apply_budget(parts: list[tuple[int, str]], budget: int) -> str:
+    """Context Builder（文档 §17）：优先保留高优先级记忆，超出预算从低优先级丢弃。"""
+    kept = list(parts)
+    total = lambda: sum(len(text) + 1 for _, text in kept)
+    while kept and total() > budget:
+        drop_index = max(range(len(kept)), key=lambda i: kept[i][0])
+        if all(p == kept[drop_index][0] for p, _ in kept):
+            # 全部同优先级仍超预算：截断尾部
+            merged, size = [], 0
+            for _, text in kept:
+                merged.append(text)
+                size += len(text) + 1
+                if size >= budget:
+                    break
+            return "\n".join(merged)[:budget]
+        kept.pop(drop_index)
+    return "\n".join(text for _, text in kept) or "（暂无记忆）"
+
+
+async def _summarize(existing_summary: str, rows: list[dict]) -> str:
+    """LLM 压缩历史对话；失败返回空串（保持旧摘要，仅丢失本次合并）。"""
+    if not rows:
+        return existing_summary
+    lines = [f"{'用户' if r['role'] == 'user' else '助手'}: "
+             f"{' '.join(str(r['content']).split())[:200]}" for r in rows]
+    try:
+        return await asyncio.to_thread(_summarize_sync, existing_summary, lines)
+    except Exception as e:
+        print(f"[memory] summarize failed: {e}")
+        return ""
+
+
+def _summarize_sync(existing_summary: str, lines: list[str]) -> str:
+    from .llm import get_llm
+    user = "已有摘要:\n" + (existing_summary or "（无）") + \
+           "\n\n新增对话:\n" + "\n".join(lines) + "\n\n请输出合并后的摘要。"
+    text = get_llm().chat(SUMMARY_SYSTEM, user)
+    return " ".join(text.split())[:400]
 
 
 def _json(obj):

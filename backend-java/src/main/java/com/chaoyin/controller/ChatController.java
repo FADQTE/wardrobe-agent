@@ -9,6 +9,7 @@ import com.chaoyin.mapper.ChatSessionMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -35,9 +36,14 @@ public class ChatController {
     }
 
     @GetMapping("/sessions/{id}/messages")
-    public ApiResponse<List<ChatMessage>> messages(@PathVariable String id) {
-        return ApiResponse.ok(messageMapper.selectList(new QueryWrapper<ChatMessage>()
-                .eq("session_id", id).orderByAsc("id")));
+    public ApiResponse<List<ChatMessage>> messages(@PathVariable String id,
+                                                   @RequestParam(defaultValue = "200") int limit) {
+        // 只取最近 limit 条再正序返回：长会话不再每轮全量拉取
+        List<ChatMessage> rows = messageMapper.selectList(new QueryWrapper<ChatMessage>()
+                .eq("session_id", id).orderByDesc("id")
+                .last("LIMIT " + Math.max(1, Math.min(limit, 500))));
+        Collections.reverse(rows);
+        return ApiResponse.ok(rows);
     }
 
     @PostMapping("/messages")
