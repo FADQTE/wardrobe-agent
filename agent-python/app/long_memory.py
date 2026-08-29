@@ -262,8 +262,22 @@ def render_facts(rows: list[dict]) -> str:
         if isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False)
         marker = "" if row.get("sourceType") == SOURCE_EXPLICIT else "（推断）"
-        lines.append(f"{row.get('predicate')}={value}{marker}")
+        # Scope（文档 §13）：非用户本人的记忆必须标注主体，防止冒充用户自身偏好
+        person = _scope_person(row.get("scope"))
+        prefix = "" if person in ("", "user") else f"[为{person}] "
+        lines.append(f"{prefix}{row.get('predicate')}={value}{marker}")
     return "；".join(lines)
+
+
+def _scope_person(scope) -> str:
+    if isinstance(scope, str) and scope:
+        try:
+            scope = json.loads(scope)
+        except (TypeError, ValueError):
+            return ""
+    if isinstance(scope, dict):
+        return str(scope.get("person") or "")
+    return ""
 
 
 def render_episodes(rows: list[dict]) -> str:

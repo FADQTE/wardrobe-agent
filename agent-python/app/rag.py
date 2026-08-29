@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Hybrid RAG：ES 商品/规则双索引，BM25 与 kNN 独立召回后做加权 RRF 融合。
+"""Hybrid RAG：ES 商品/规则双索引，BM25 与 kNN 双路并行召回后做加权 RRF 融合。
 
 检索边界：
 - 商品：status + 类目/颜色/季节/风格/价格过滤；
 - 规则：published + 类型/标签 + 生效时间窗过滤；
 - 向量不可用、维度不匹配或 kNN 异常时自动降级 BM25；
-- `_source` 永远排除 embedding，避免把 1024 维向量传给 Agent/前端。
+- `_source` 永远排除 embedding，避免把 1024 维向量传给 Agent/前端；
+- 商品/规则检索结果带 60s 缓存，对外一律返回深拷贝，防上层变异污染缓存。
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -87,6 +90,21 @@ def _vector_search(index: str, query: str, filters: list[dict], size: int) -> tu
         return [], "knn_error"
 
 
+def _dual_recall(index: str, must: list[dict], filters: list[dict],
+                 query: str, window: int) -> tuple[dict, list[dict], str]:
+    """BM25 与 kNN 两路并行召回（IO 型任务，线程池 fan-out）。
+
+    词法路异常照常抛出（与串行版语义一致）；kNN 路内部已自降级为空，
+    任何向量故障都不会拖慢或污染词法结果。
+    """
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        lexical_future = pool.submit(_lexical_search, index, must, filters, window)
+        vector_future = pool.submit(_vector_search, index, query, filters, window)
+        lexical = lexical_future.result()
+        vector_hits, vector_state = vector_future.result()
+    return lexical, vector_hits, vector_state
+
+
 def _rrf_fuse(lexical_hits: list[dict], vector_hits: list[dict],
               *, offset: int = 0, size: int = 10) -> list[dict]:
     """加权 Reciprocal Rank Fusion；分数只依赖各通道排名，不混用 BM25/cosine 量纲。"""
@@ -140,8 +158,22 @@ def _retrieval_mode(lexical_hits: list, vector_hits: list) -> str:
 def hybrid_product_search(keyword: str = "", category: str = "", color: str = "",
                           season: str = "", style: str = "", max_price: float | None = None,
                           page: int = 1, size: int = 24, min_score: float | None = None) -> dict:
-    """商城检索：BM25 与 kNN 双路召回 + 标签过滤 + 加权 RRF。"""
+    """商城检索：BM25 与 kNN 双路召回 + 标签过滤 + 加权 RRF（60s 缓存）。"""
     page, size = max(1, page), max(1, size)
+    cache_key = ("product", keyword, category, color, season, style,
+                 max_price, page, size, min_score)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return deepcopy(cached)
+    result = _product_search_uncached(keyword, category, color, season, style,
+                                      max_price, page, size, min_score)
+    _cache_put(cache_key, result)
+    return deepcopy(result)
+
+
+def _product_search_uncached(keyword: str, category: str, color: str, season: str,
+                             style: str, max_price: float | None,
+                             page: int, size: int, min_score: float | None) -> dict:
     offset = (page - 1) * size
     filters: list[dict] = [{"term": {"status": 1}}]
     if category:
@@ -183,9 +215,9 @@ def hybrid_product_search(keyword: str = "", category: str = "", color: str = ""
     must = [{"multi_match": {
         "query": keyword, "fields": ["name^3", "detail"], "type": "best_fields",
     }}]
-    lexical = _lexical_search(config.PRODUCT_INDEX, must, filters, window)
+    lexical, vector_hits, vector_state = _dual_recall(
+        config.PRODUCT_INDEX, must, filters, keyword, window)
     lexical_hits = list(lexical["hits"]["hits"])
-    vector_hits, vector_state = _vector_search(config.PRODUCT_INDEX, keyword, filters, window)
     entries = _rrf_fuse(lexical_hits, vector_hits, offset=offset, size=size)
     mode = _retrieval_mode(lexical_hits, vector_hits)
     products = []

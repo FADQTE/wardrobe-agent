@@ -21,7 +21,10 @@ app.include_router(router)
 @app.on_event("startup")
 async def repair_rule_index_on_startup():
     """Java/Agent 并行启动时短暂重试，全量修复可能漏掉的规则增量通知。"""
+    import httpx
+
     from .api import rules_fullsync
+    from . import config
 
     async def run():
         for delay in (2, 5, 10):
@@ -29,8 +32,19 @@ async def repair_rule_index_on_startup():
             result = await rules_fullsync()
             if result.get("code") == 0:
                 print(f"[startup] {result.get('msg')}", flush=True)
-                return
-        print("[startup] rule fullsync skipped: Java/ES still unavailable", flush=True)
+                break
+        else:
+            print("[startup] rule fullsync skipped: Java/ES still unavailable", flush=True)
+        # 记忆遗忘：启动时归档陈旧低强度记忆（用户明确高置信记忆天然豁免）
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                r = await c.post(f"{config.JAVA_API_URL}/memory/decay",
+                                 params={"staleDays": 30})
+                if r.status_code == 200:
+                    print(f"[startup] memory decay archived "
+                          f"{(r.json().get('data') or 0)} memories", flush=True)
+        except Exception as e:
+            print(f"[startup] memory decay skipped: {e}", flush=True)
 
     asyncio.create_task(run())
 

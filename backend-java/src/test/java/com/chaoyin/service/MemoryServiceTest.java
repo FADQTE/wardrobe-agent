@@ -137,6 +137,43 @@ class MemoryServiceTest {
         assertTrue(captor.getValue().getLastAccessedAt() != null);
     }
 
+    @Test
+    void decayArchivesStaleWeakMemoriesButProtectsStrongOrRecentOnes() {
+        AgentMemory staleWeak = memory(1L, "preferred_style", "minimal", "agent_inference", 0.5f);
+        staleWeak.setImportance(0.4f);
+        staleWeak.setLastAccessedAt(LocalDateTime.now().minusDays(60));
+
+        AgentMemory strong = memory(2L, "preferred_color", "black", "agent_inference", 0.6f);
+        strong.setImportance(0.9f);
+        strong.setLastAccessedAt(LocalDateTime.now().minusDays(60));
+
+        AgentMemory recent = memory(3L, "preferred_style", "sporty", "agent_inference", 0.5f);
+        recent.setImportance(0.4f);
+        recent.setLastAccessedAt(LocalDateTime.now().minusDays(1));
+
+        when(mapper.selectList(any(QueryWrapper.class)))
+                .thenReturn(List.of(staleWeak, strong, recent));
+
+        int archived = service.decay(30);
+
+        assertEquals(1, archived);
+        assertEquals(MemoryService.STATUS_ARCHIVED, staleWeak.getStatus());
+        assertEquals(MemoryService.STATUS_ACTIVE, strong.getStatus());
+        assertEquals(MemoryService.STATUS_ACTIVE, recent.getStatus());
+    }
+
+    @Test
+    void decayNeverTouchesExemptMemories() {
+        AgentMemory explicit = memory(1L, "shoe_size", "43", "user_explicit", 1.0f);
+        explicit.setDecayEnabled(0);
+        explicit.setLastAccessedAt(LocalDateTime.now().minusDays(365));
+        when(mapper.selectList(any(QueryWrapper.class))).thenReturn(List.of(explicit));
+
+        assertEquals(0, service.decay(30));
+        assertEquals(MemoryService.STATUS_ACTIVE, explicit.getStatus());
+        verify(mapper, never()).updateById(any(AgentMemory.class));
+    }
+
     private AgentMemory memory(Long id, String predicate, String value,
                                String sourceType, float confidence) {
         AgentMemory memory = new AgentMemory();

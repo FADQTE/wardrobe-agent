@@ -28,6 +28,8 @@ public class MemoryService {
     public static final String STATUS_INVALID = "invalid";
     public static final String SOURCE_EXPLICIT = "user_explicit";
     public static final String SOURCE_INFERENCE = "agent_inference";
+    /** 强度低于该值的陈旧记忆归档：importance × confidence */
+    public static final float DECAY_STRENGTH_THRESHOLD = 0.3f;
 
     private final AgentMemoryMapper mapper;
 
@@ -113,6 +115,37 @@ public class MemoryService {
             memory.setStatus(STATUS_INVALID);
             mapper.updateById(memory);
         }
+    }
+
+    /**
+     * 遗忘衰减（Memory Strength = Importance × Confidence × Recency）：
+     * 超过 staleDays 未访问且强度不足的 active 记忆归档；用户明确高置信记忆 decay_enabled=0 天然豁免。
+     *
+     * @return 归档条数
+     */
+    public int decay(int staleDays) {
+        List<AgentMemory> actives = mapper.selectList(new QueryWrapper<AgentMemory>()
+                .eq("status", STATUS_ACTIVE).eq("decay_enabled", 1));
+        LocalDateTime deadline = LocalDateTime.now().minusDays(Math.max(1, staleDays));
+        int archived = 0;
+        for (AgentMemory memory : actives) {
+            if (memory.getDecayEnabled() != null && memory.getDecayEnabled() == 0) {
+                continue; // 双保险：查询已过滤豁免记忆，循环内再防一次
+            }
+            LocalDateTime anchor = memory.getLastAccessedAt() != null
+                    ? memory.getLastAccessedAt() : memory.getCreatedAt();
+            if (anchor == null || anchor.isAfter(deadline)) {
+                continue; // 近期仍在使用，不衰减
+            }
+            float importance = memory.getImportance() == null ? 0.5f : memory.getImportance();
+            float confidence = memory.getConfidence() == null ? 0.5f : memory.getConfidence();
+            if (importance * confidence < DECAY_STRENGTH_THRESHOLD) {
+                memory.setStatus(STATUS_ARCHIVED);
+                mapper.updateById(memory);
+                archived++;
+            }
+        }
+        return archived;
     }
 
     private void normalize(AgentMemory memory) {

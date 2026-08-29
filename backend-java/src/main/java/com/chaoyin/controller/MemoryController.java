@@ -73,6 +73,11 @@ public class MemoryController {
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/decay")
+    public ApiResponse<Integer> decay(@RequestParam(defaultValue = "30") int staleDays) {
+        return ApiResponse.ok(memoryService.decay(staleDays));
+    }
+
     private AgentMemory toEntity(WriteRequest req) {
         AgentMemory memory = new AgentMemory();
         memory.setUserId(req.getUserId());

@@ -85,6 +85,17 @@ class ReadPathTests(unittest.TestCase):
         self.assertIn('"min": 0', budget)
         self.assertIn('"max": 1000', budget)
 
+    def test_render_facts_labels_non_user_person_scope(self):
+        rendered = lm.render_facts([
+            {"predicate": "budget", "value": "500", "sourceType": "user_explicit",
+             "scope": "{\"person\": \"父亲\"}"},
+            {"predicate": "size_top", "value": "L", "sourceType": "user_explicit",
+             "scope": "{\"person\": \"user\"}"},
+        ])
+        self.assertIn("[为父亲] budget=500", rendered)
+        self.assertIn("size_top=L", rendered)
+        self.assertNotIn("[为user]", rendered)
+
     def test_render_facts_empty_is_blank(self):
         self.assertEqual("", lm.render_facts([]))
 
