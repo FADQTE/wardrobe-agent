@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import operator
+from datetime import datetime
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -181,6 +182,36 @@ def build_outfit(state: AgentState) -> dict | None:
     }
 
 
+def _format_activity_end(value: str | None) -> str:
+    if not value:
+        return "结束时间以活动页为准"
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt.strftime("%m月%d日 %H:%M")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _compose_activity_list(state: AgentState) -> str | None:
+    """纯活动查询用确定性清单回答，保证每条召回证据都被展示且不被模型省略。"""
+    activity_results = _get_results(state, "rule_query")
+    if not activity_results:
+        return None
+    if _get_results(state, "wardrobe", "rag", "product", "image", "order", "favorite"):
+        return None
+    rules = activity_results[0]["data"].get("rules", [])
+    if not rules:
+        return "目前没有查到可靠的进行中活动。你也可以告诉我想买的品类，我再帮你查对应优惠。"
+    lines = [f"目前有 **{len(rules)} 个正在生效的活动**（按结束时间排序）：", ""]
+    for rule in rules:
+        lines.append(
+            f"- **{rule.get('title') or '未命名活动'}**：{rule.get('content') or '详情以活动页为准'}"
+            f"（有效至 {_format_activity_end(rule.get('effectiveTo'))}；来源：{rule.get('source') or '运营平台'}）"
+        )
+    lines.extend(["", "> 仅展示已发布且当前处于有效期内的活动，过期、未生效和草稿活动已过滤。"])
+    return "\n".join(lines)
+
+
 def _compose_mock(state: AgentState) -> str:
     parts = []
     ward = _get_results(state, "wardrobe")
@@ -188,8 +219,10 @@ def _compose_mock(state: AgentState) -> str:
         names = "、".join(i["name"] for i in ward[0]["data"].get("items", [])[:4])
         parts.append(f"已从你的衣橱找到：{names}。")
     rules = _get_results(state, "rag", "rule_query")
-    for r in rules[0]["data"].get("rules", [])[:3] if rules else []:
-        parts.append(f"穿搭建议（来源「{r['source']}」·{r['title']}）：{r['content']}")
+    for result in rules[:1]:
+        label = "活动" if result.get("type") == "rule_query" else "穿搭建议"
+        for r in result["data"].get("rules", [])[:3]:
+            parts.append(f"{label}（来源「{r['source']}」·{r['title']}）：{r['content']}")
     prods = _get_results(state, "product")
     if prods:
         ps = prods[0]["data"].get("products", [])[:4]
@@ -224,7 +257,8 @@ def _compose_llm(state: AgentState) -> str:
             results.append({"type": "wardrobe", "items": items})
         elif r.get("type") in ("rag", "rule_query") and r.get("ok"):
             results.append({"type": r["type"], "rules": [
-                {"title": x.get("title"), "content": x.get("content"), "source": x.get("source")}
+                {"title": x.get("title"), "content": x.get("content"), "source": x.get("source"),
+                 "effectiveFrom": x.get("effectiveFrom"), "effectiveTo": x.get("effectiveTo")}
                 for x in r["data"].get("rules", [])]})
         elif r.get("type") == "product" and r.get("ok"):
             results.append({"type": "product", "products": [
@@ -269,7 +303,9 @@ async def assemble_node(state: AgentState) -> dict:
         events.append({"type": "status", "data": {
             "text": "等待用户补充信息（澄清最多 2 轮后兜底引导）", "stage": "clarify"}})
     else:
-        text = _compose_mock(state) if (config.MOCK_AGENT or not config.LLM_API_KEY) else _compose_llm(state)
+        text = _compose_activity_list(state)
+        if text is None:
+            text = _compose_mock(state) if (config.MOCK_AGENT or not config.LLM_API_KEY) else _compose_llm(state)
         outfit = build_outfit(state)
         if outfit:
             events.append({"type": "outfit", "data": {"outfit": outfit}})

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 
 import httpx
 
@@ -44,6 +45,15 @@ def classify_error(e: Exception) -> str:
     if "库存" in s or "状态" in s or "business" in s or "不可用" in s:
         return "business"
     return "unknown"
+
+
+def is_broad_activity_query(query: str) -> bool:
+    """识别“现在有什么活动”一类清单查询，避免相关性阈值把有效活动压成一条。"""
+    remaining = re.sub(r"[\s？?！!，,。.：:]", "", query or "")
+    for word in ("告诉我", "帮我查", "查一下", "看一下", "请问", "现在", "当前", "最近",
+                 "商城", "正在进行", "进行中", "有什么", "有哪些", "活动", "优惠", "促销", "折扣", "吗", "呢"):
+        remaining = remaining.replace(word, "")
+    return not remaining
 
 
 # ---------- 各任务实现 ----------
@@ -89,21 +99,26 @@ async def do_rag(task, state, memory, rule_type=None) -> dict:
     stage = "rule_query" if rule_type else "rag"
     events = [_status_event("检索穿搭/活动规则（ES 混合检索 + 时间窗过滤）…", stage)]
     try:
+        broad_activity = rule_type == "activity" and is_broad_activity_query(query)
+        search_query = "" if broad_activity else query
         # rerank 开启时多召回候选，再重排收敛
-        candidate_size = config.RERANK_TOP_N if (config.RERANK_ENABLED and query) else 6
-        rules = rag.hybrid_rule_search(query, tags=tags, rule_type=rule_type,
+        candidate_size = 20 if broad_activity else (config.RERANK_TOP_N if (config.RERANK_ENABLED and search_query) else 6)
+        rules = rag.hybrid_rule_search(search_query, tags=tags, rule_type=rule_type,
                                        only_time_valid=True, fallback_all=(rule_type == "activity"),
                                        size=candidate_size)
-        if config.RERANK_ENABLED and query and len(rules) > 1:
+        if config.RERANK_ENABLED and search_query and len(rules) > 1:
             from . import rerank as rerank_mod
             rules = await rerank_mod.rerank(
-                query,
+                search_query,
                 [r | {"text": f"{r.get('title', '')} {r.get('content', '')}"} for r in rules],
                 top_k=6)
-            events.append(_tool_event("rerank", {"query": query, "topK": len(rules)}, True,
+            events.append(_tool_event("rerank", {"query": search_query, "topK": len(rules)}, True,
                                       f"Reranker 重排 Top{len(rules)}（Qwen3-Reranker 本地部署）"))
         events.append({"type": "rag", "data": {"rules": rules, "query": query}})
-        events.append(_tool_event("hybrid_rule_search", {"query": query, "tags": tags, "type": rule_type},
+        events.append(_tool_event("hybrid_rule_search", {
+            "query": query, "tags": tags, "type": rule_type,
+            "mode": "all_current" if broad_activity else "relevant",
+        },
                                   True, f"召回 {len(rules)} 条有效规则（已过滤过期/未生效/未发布）"))
         return {"task_id": task["id"], "type": stage, "ok": True, "data": {"rules": rules}, "events": events}
     except Exception as e:

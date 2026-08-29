@@ -35,6 +35,27 @@ def _sse(ev: dict) -> str:
     return f"data: {json.dumps(ev, ensure_ascii=False, default=str)}\n\n"
 
 
+def _history_meta(final_state: dict | None) -> dict:
+    """从本轮事件中提取重进页面后仍可恢复的富展示数据。"""
+    meta: dict = {}
+    for ev in (final_state or {}).get("events", []):
+        data = ev.get("data") or {}
+        if ev.get("type") == "product":
+            meta["products"] = data.get("products") or []
+            meta["productTitle"] = data.get("title") or "商城在售候选"
+        elif ev.get("type") == "outfit":
+            meta["outfit"] = data.get("outfit")
+        elif ev.get("type") == "image":
+            meta["image"] = {
+                "url": data.get("url"),
+                "label": data.get("label") or "换装效果图",
+                "taskId": data.get("taskId"),
+            }
+        elif ev.get("type") == "handoff":
+            meta["handoff"] = data.get("reason")
+    return {k: v for k, v in meta.items() if v is not None}
+
+
 def _es_dt(s):
     """Java LocalDateTime(无时区) → ES date(ISO8601 +08:00)。"""
     if not s:
@@ -72,9 +93,14 @@ def _deactivate_family(es, rule_id: int, title: str):
 @router.post("/api/chat")
 async def chat(req: ChatRequest):
     async def gen():
+        memory = None
+        assistant_saved = False
         try:
             memory = SessionMemory(req.session_id, req.user_id)
             await memory.load()
+            # 先落会话和用户消息：即使用户立刻切换页面，后台仍可完成本轮并供前端恢复。
+            await memory.save(title=req.message.strip()[:60] if not memory.exists else None)
+            await memory.append_message("user", req.message)
             try:
                 await get_mcp_tools()
             except Exception as e:
@@ -128,6 +154,8 @@ async def chat(req: ChatRequest):
 
             await memory.save()
             text = (final_state or {}).get("final_text", "") or ""
+            await memory.append_message("assistant", text, _history_meta(final_state))
+            assistant_saved = True
             for i in range(0, len(text), 8):
                 async for sse_line in emit({"type": "token", "data": {"text": text[i:i + 8]}}):
                     yield sse_line
@@ -138,15 +166,18 @@ async def chat(req: ChatRequest):
         except Exception as e:
             import traceback
             traceback.print_exc()
+            error_text = f"Agent 内部错误: {e}"
+            if memory is not None and not assistant_saved:
+                await memory.append_message("assistant", error_text, {"error": True})
             if req.transport == "ws":
                 try:
                     async with httpx.AsyncClient(timeout=5) as c:
                         await c.post(f"{config.JAVA_API_URL}/internal/push", json={
                             "sessionId": req.session_id,
-                            "event": {"type": "error", "data": {"text": f"Agent 内部错误: {e}"}}})
+                            "event": {"type": "error", "data": {"text": error_text}}})
                 except Exception:
                     pass
-            yield _sse({"type": "error", "data": {"text": f"Agent 内部错误: {e}"}})
+            yield _sse({"type": "error", "data": {"text": error_text}})
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive",

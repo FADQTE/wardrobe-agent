@@ -71,6 +71,15 @@ export interface Order {
   createdAt?: string
 }
 
+export interface PersistedChatMessage {
+  id: number
+  sessionId: string
+  role: 'user' | 'assistant'
+  content: string
+  meta?: string
+  createdAt?: string
+}
+
 // ---- 业务 API ----
 export const login = (username: string, password: string) =>
   api<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
@@ -139,6 +148,9 @@ export const createOrder = (userId: number, items: { productId: number; quantity
 
 export const payOrder = (id: number) => api<void>(`/api/orders/${id}/pay`, { method: 'POST' })
 export const listOrders = (userId: number) => api<Order[]>(`/api/orders?userId=${userId}`)
+
+export const getChatMessages = (sessionId: string) =>
+  api<PersistedChatMessage[]>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`)
 
 export const uploadFile = async (file: File): Promise<string> => {
   const fd = new FormData()

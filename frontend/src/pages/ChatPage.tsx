@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Button, Card, Col, Empty, Image as AntImage, Input, Row, Space, Tag, Typography,
+  Button, Card, Col, Image as AntImage, Input, Row, Space, Spin, Tag, Typography,
 } from 'antd'
 import { AuditOutlined, ExperimentOutlined, RobotOutlined, SendOutlined, UserOutlined } from '@ant-design/icons'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useUser } from '../App'
-import { Product } from '../api'
+import { getChatMessages, PersistedChatMessage, Product } from '../api'
 import PlanPanel, { PlanData, ProgressLine } from '../components/PlanPanel'
 
 interface ChatMsg {
@@ -39,11 +41,41 @@ const EXAMPLES = [
 
 let msgId = 1
 
+function restoreMessage(message: PersistedChatMessage): ChatMsg {
+  let meta: Partial<ChatMsg> = {}
+  if (message.meta) {
+    try { meta = JSON.parse(message.meta) as Partial<ChatMsg> } catch { /* 兼容旧的空/无效 meta */ }
+  }
+  return {
+    ...meta,
+    id: message.id,
+    role: message.role,
+    text: message.content || '',
+    thinking: false,
+  }
+}
+
+function MarkdownText({ text }: { text: string }) {
+  return (
+    <div className="chat-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
 export default function ChatPage() {
   const { user } = useUser()
   const [messages, setMessages] = useState<ChatMsg[]>([WELCOME])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(true)
   const [plan, setPlan] = useState<PlanData>({})
   const [wsState, setWsState] = useState<'connecting' | 'open' | 'closed'>('closed')
   const [panelWidth, setPanelWidth] = useState(440)
@@ -56,7 +88,10 @@ export default function ChatPage() {
   const wsRef = useRef<WebSocket | null>(null)
   const hbRef = useRef<number | undefined>(undefined)
   const retryRef = useRef<number | undefined>(undefined)
+  const historyRetryRef = useRef<number | undefined>(undefined)
   const attemptRef = useRef(0)
+  const readyRef = useRef(false)
+  const pendingHistoryIdRef = useRef(0)
 
   // ---- 统一事件处理（WS 与 SSE 共用） ----
   const handleEvent = (ev: any) => {
@@ -181,20 +216,82 @@ export default function ChatPage() {
   }
 
   useEffect(() => {
+    let active = true
     if (!sessionRef.current) {
       sessionRef.current = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
       localStorage.setItem('cy_session_id', sessionRef.current)
     }
-    connectWs()
-    const preset = sessionStorage.getItem('cy_preset_message')
-    if (preset) {
-      sessionStorage.removeItem('cy_preset_message')
-      setTimeout(() => send(preset), 600)
+
+    const loadHistory = async (attempt = 0): Promise<boolean> => {
+      try {
+        const history = await getChatMessages(sessionRef.current)
+        if (!active) return false
+        const restored = history
+          .filter((item) => item.role === 'user' || item.role === 'assistant')
+          .map(restoreMessage)
+        const maxId = restored.reduce((max, item) => Math.max(max, item.id), 0)
+        msgId = Math.max(msgId, maxId + 1)
+        const waitingForAssistant = restored[restored.length - 1]?.role === 'user'
+        if (waitingForAssistant) {
+          if (!pendingHistoryIdRef.current) pendingHistoryIdRef.current = msgId++
+          const pending: ChatMsg = { id: pendingHistoryIdRef.current, role: 'assistant', text: '', thinking: true }
+          asstIdRef.current = pending.id
+          setMessages((current) => {
+            const livePending = current.find((item) => item.id === pending.id)
+            if (attempt >= 30) {
+              return [...restored, {
+                ...(livePending ?? pending),
+                text: livePending?.text || '回复仍在后台处理中，请稍后重新进入本页查看完整结果。',
+                thinking: false,
+                error: true,
+              }]
+            }
+            return [...restored, livePending ?? pending]
+          })
+          setSending(attempt < 30)
+          if (attempt < 30) {
+            historyRetryRef.current = window.setTimeout(() => loadHistory(attempt + 1), 1000)
+          }
+        } else {
+          pendingHistoryIdRef.current = 0
+          asstIdRef.current = 0
+          setMessages(restored.length ? restored : [WELCOME])
+          setSending(false)
+        }
+        return waitingForAssistant
+      } catch {
+        if (active) setMessages([WELCOME])
+        return false
+      } finally {
+        if (active && attempt === 0) {
+          readyRef.current = true
+          setHistoryLoading(false)
+        }
+      }
     }
+
+    const initialize = async () => {
+      const waitingForAssistant = await loadHistory()
+      if (!active) return
+      connectWs()
+      const preset = sessionStorage.getItem('cy_preset_message')
+      if (preset && !waitingForAssistant) {
+        sessionStorage.removeItem('cy_preset_message')
+        window.setTimeout(() => send(preset), 300)
+      }
+    }
+    initialize()
+
     return () => {
+      active = false
+      readyRef.current = false
       window.clearTimeout(retryRef.current)
+      window.clearTimeout(historyRetryRef.current)
       window.clearInterval(hbRef.current)
-      wsRef.current?.close()
+      if (wsRef.current) {
+        wsRef.current.onclose = null
+        wsRef.current.close()
+      }
     }
   }, [])
 
@@ -204,7 +301,7 @@ export default function ChatPage() {
 
   const send = async (text?: string) => {
     const content = (text ?? input).trim()
-    if (!content || sending) return
+    if (!content || sending || !readyRef.current) return
     setInput('')
     setSending(true)
     setPlan({})
@@ -256,7 +353,7 @@ export default function ChatPage() {
   const renderMsg = (m: ChatMsg) => {
     if (m.role === 'user') {
       return (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <div key={m.id} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
           <div style={{ maxWidth: '72%', background: '#1677ff', color: '#fff', padding: '8px 12px', borderRadius: 10 }}>
             <Typography.Text style={{ color: '#fff', whiteSpace: 'pre-wrap' }}>{m.text}</Typography.Text>
           </div>
@@ -265,12 +362,12 @@ export default function ChatPage() {
       )
     }
     return (
-      <div style={{ display: 'flex', marginBottom: 12 }}>
+      <div key={m.id} style={{ display: 'flex', marginBottom: 12 }}>
         <span style={{ marginRight: 8, color: '#1677ff', fontSize: 18 }}><RobotOutlined /></span>
         <div style={{ maxWidth: '86%', flex: 1 }}>
           <div style={{ background: '#f5f7fa', padding: '8px 12px', borderRadius: 10 }}>
             {m.thinking && !m.text ? <Typography.Text type="secondary">思考中…</Typography.Text> : null}
-            {m.text && <Typography.Text style={{ whiteSpace: 'pre-wrap' }}>{m.text}</Typography.Text>}
+            {m.text && <MarkdownText text={m.text} />}
             {m.products && (
               <div style={{ marginTop: 8 }}>
                 <Typography.Text type="secondary" style={{ fontSize: 12 }}>{m.productTitle}：</Typography.Text>
@@ -341,9 +438,11 @@ export default function ChatPage() {
     <div style={{ display: 'flex', gap: 12, height: 'calc(100vh - 120px)' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0' }}>
         <div ref={listRef} style={{ flex: 1, overflow: 'auto', padding: 16 }}>
-          {messages.map(renderMsg)}
+          {historyLoading
+            ? <div style={{ minHeight: 180, display: 'grid', placeItems: 'center' }}><Spin aria-label="正在恢复对话记录" /></div>
+            : messages.map(renderMsg)}
         </div>
-        {messages.length <= 1 && (
+        {!historyLoading && messages.length <= 1 && (
           <div style={{ padding: '0 16px 8px' }}>
             <Space wrap>
               {EXAMPLES.map((e) => (
@@ -365,10 +464,11 @@ export default function ChatPage() {
           </Button>
           <Input.TextArea
             value={input} autoSize={{ minRows: 1, maxRows: 4 }} placeholder="描述你的穿搭需求，如：用衣橱里的白衬衫搭一套秋季通勤装"
+            disabled={historyLoading}
             onChange={(e) => setInput(e.target.value)}
             onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); send() } }}
           />
-          <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={() => send()}>发送</Button>
+          <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={historyLoading} onClick={() => send()}>发送</Button>
         </div>
       </div>
       {/* 拖拽手柄 */}

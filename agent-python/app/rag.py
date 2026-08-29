@@ -121,7 +121,7 @@ def hybrid_rule_search(query: str, tags: Optional[list[str]] = None,
     fallback_all=True 时（活动查询）：关键词零命中则回退返回当前全部有效规则。
     返回: [{id, title, content, source, version, timeValid, tags, score}]
     """
-    cache_key = (query, tuple(tags or []), rule_type, only_time_valid, size)
+    cache_key = (query, tuple(tags or []), rule_type, only_time_valid, size, fallback_all)
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
@@ -142,7 +142,8 @@ def hybrid_rule_search(query: str, tags: Optional[list[str]] = None,
 
     body = {"query": {"bool": {"must": must, "filter": filters}}, "size": size}
     if not must:
-        body["sort"] = [{"effective_from": {"order": "desc"}}]
+        # 清单查询优先展示即将结束的活动，方便用户先用快到期的优惠。
+        body["sort"] = [{"effective_to": {"order": "asc"}}, {"effective_from": {"order": "desc"}}]
     if query and es.has_vector:
         vec = es.embed([query])
         if vec:

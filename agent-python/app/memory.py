@@ -2,6 +2,8 @@
 """Session Memory：人物形象/选中单品/候选搭配，落库到 Java 侧 chat_session。"""
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from . import config
@@ -22,6 +24,7 @@ class SessionMemory:
         # 深拷贝：DEFAULT_MEMORY 的嵌套 list 不能跨会话共享（否则污染新会话）
         import copy
         self.state = copy.deepcopy(DEFAULT_MEMORY)
+        self.exists = False
 
     async def load(self):
         try:
@@ -29,22 +32,42 @@ class SessionMemory:
                 r = await c.get(f"{config.JAVA_API_URL}/chat/sessions/{self.session_id}")
                 if r.status_code == 200:
                     data = r.json().get("data", {})
+                    self.exists = bool(data)
                     state = data.get("state")
                     if state:
-                        import json
                         self.state.update(json.loads(state))
         except Exception:
             pass
 
-    async def save(self):
+    async def save(self, title: str | None = None):
         try:
+            payload = {
+                "id": self.session_id, "userId": self.user_id,
+                "state": _json(self.state),
+            }
+            if title:
+                payload["title"] = title[:128]
             async with httpx.AsyncClient(timeout=5) as c:
-                await c.post(f"{config.JAVA_API_URL}/chat/sessions", json={
-                    "id": self.session_id, "userId": self.user_id,
-                    "state": _json(self.state),
-                })
+                r = await c.post(f"{config.JAVA_API_URL}/chat/sessions", json=payload)
+                r.raise_for_status()
+                self.exists = True
         except Exception as e:
             print(f"[memory] save failed: {e}")
+
+    async def append_message(self, role: str, content: str, meta: dict | None = None):
+        """把可恢复的对话正文与展示元数据写入 Java 侧 chat_message。"""
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                r = await c.post(f"{config.JAVA_API_URL}/chat/messages", json={
+                    "sessionId": self.session_id,
+                    "role": role,
+                    "content": content,
+                    "meta": _json(meta or {}),
+                })
+                r.raise_for_status()
+        except Exception as e:
+            # 持久化失败不能中断当轮回复，但需要在服务日志中留下明确证据。
+            print(f"[memory] append message failed: {e}")
 
     def select(self, items: list[dict]):
         """记录本轮选中的单品（保留最近 8 件）。"""
@@ -76,5 +99,4 @@ class SessionMemory:
 
 
 def _json(obj):
-    import json
     return json.dumps(obj, ensure_ascii=False, default=str)
