@@ -38,7 +38,7 @@ INTENT_SYSTEM = """你是智能衣橱的穿搭客服编排器。把用户的自�
 3. "生成效果图"类任务 deps 必须引用其依赖的 wardrobe/rag/product 任务 id
 4. 任务 id 用 t1,t2,... 顺序编号；没有依赖的 deps 用 []
 5. "预算X以内" → product 任务 maxPrice=X；"换成商城在售的" → product 任务
-6. "退款支持吗/能退吗/退换货规则" → aftersale(action=policy)；"售后进度/退款处理到哪" → aftersale(action=query)；"帮我退货/我想退款 + 订单号" → aftersale(action=apply, orderNo=订单号)
+6. "退款支持吗/能退吗/退换货规则" → aftersale(action=policy)；"售后进度/退款处理到哪" → aftersale(action=query)；"帮我退货/我想退款/把订单退掉 + 订单号" → aftersale(action=apply, orderNo=订单号)
 7. "帮我查订单/我的订单" → order_query；"物流/快递到哪" → logistics。订单号格式通常为 CY 加数字
 8. "把XX加入购物车/加购XX" → product 任务定位商品 + cart 任务(action=add) 依赖它；"看下我的购物车" → cart(action=list)
 8. "某优惠券/活动还能用吗、为什么用不了、是不是过期了" → rule_query，activityName 填用户提到的活动或优惠券名称
@@ -72,16 +72,24 @@ def _parse_business_intent(message: str) -> dict | None:
     order_match = re.search(r"CY\d{8,}", text, re.IGNORECASE)
     order_no = order_match.group(0).upper() if order_match else ""
 
-    aftersale_words = ("退款", "退货", "换货", "退换", "售后", "质量问题", "不想要了")
+    # 覆盖用户常见的口语表达（例如“把订单 CY… 退掉”），避免仅因
+    # 没有出现“退款/退货”这两个完整词而误路由为订单查询。
+    aftersale_words = (
+        "退款", "退货", "换货", "退换", "售后", "质量问题", "不想要了",
+        "退掉", "退了", "退一下", "给我退", "帮我退", "我要退", "申请退",
+    )
     if any(word in text for word in aftersale_words):
         if any(word in text for word in ("进度", "状态", "处理到哪", "审核到哪", "售后单")):
             action = "query"
             summary = "查询售后申请进度"
-        elif order_no and any(word in text for word in ("退款", "退货", "换货", "不想要了")):
+        elif order_no and any(word in text for word in aftersale_words):
             # 带订单号的明确诉求 → 直接创建售后申请
             action = "apply"
             summary = f"创建售后申请（订单 {order_no}）"
-        elif any(word in text for word in ("退货", "换货", "不想要了", "帮我退", "我要退", "申请退", "申请售后")):
+        elif any(word in text for word in (
+            "退货", "换货", "不想要了", "退掉", "退了", "退一下",
+            "给我退", "帮我退", "我要退", "申请退", "申请售后",
+        )):
             # 明确的退货/退款诉求但缺单号 → 走申请流程并回查最近订单让用户挑
             action = "apply"
             summary = "创建售后申请（待用户指定订单）"

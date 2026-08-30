@@ -24,6 +24,15 @@ class BusinessIntentTests(unittest.TestCase):
         self.assertEqual("logistics", logistics["tasks"][0]["type"])
         self.assertEqual("CY202608150001", logistics["tasks"][0]["params"]["orderNo"])
 
+    def test_colloquial_cancel_refund_request_with_order_number_is_aftersale_apply(self):
+        """“把订单退掉”不能因缺少“退款”二字误判成订单查询。"""
+        order_no = "CY20260830230433202"
+        intent = parse_intent(f"把订单{order_no}退掉", "（暂无记忆）")
+
+        self.assertEqual("aftersale", intent["tasks"][0]["type"])
+        self.assertEqual("apply", intent["tasks"][0]["params"]["action"])
+        self.assertEqual(order_no, intent["tasks"][0]["params"]["orderNo"])
+
 
 class RecentMemoryTests(unittest.TestCase):
     def test_recent_dialogue_is_included_in_context(self):
