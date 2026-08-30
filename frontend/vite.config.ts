@@ -4,7 +4,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 16548,
+    // strictPort：端口被占时直接报错，禁止静默跳号（跳号曾导致请求打到别的进程）
+    strictPort: true,
+    host: '127.0.0.1',
+    port: 16552,
     proxy: {
       // Java 业务服务（REST + MCP SSE 端点）
       '/api': { target: 'http://localhost:16545', changeOrigin: true },

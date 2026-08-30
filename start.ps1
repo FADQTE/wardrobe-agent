@@ -51,11 +51,11 @@ if ($env:JAVA_HOME) {
 }
 Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$root\agent-python'; uv run uvicorn app.main:app --host 0.0.0.0 --port 16546"
 
-Write-Host '== 5/5 启动前端 (Vite :16548) ==' -ForegroundColor Cyan
+Write-Host '== 5/5 启动前端 (Vite :16552) ==' -ForegroundColor Cyan
 Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$root\frontend'; pnpm dev"
 
 Write-Host ''
-Write-Host '完成! 打开 http://localhost:16548' -ForegroundColor Green
+Write-Host '完成! 打开 http://127.0.0.1:16552' -ForegroundColor Green
 Write-Host '  后端健康: http://localhost:16545/api/health' -ForegroundColor DarkGray
 Write-Host '  Agent健康: http://localhost:16546/health' -ForegroundColor DarkGray
 Write-Host '  Netty WS:  ws://localhost:16547/ws/chat' -ForegroundColor DarkGray

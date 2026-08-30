@@ -333,11 +333,11 @@ export interface AfterSaleRow {
 }
 
 export const adminListAfterSales = (status: string) =>
-  api<AfterSaleRow[]>(`/admin/aftersales?status=${encodeURIComponent(status)}`)
+  api<AfterSaleRow[]>(`/api/admin/aftersales?status=${encodeURIComponent(status)}`)
 
 export const adminReviewAfterSale = (
   id: number, action: 'approve' | 'reject', reason: string,
-) => api<AfterSaleRecord>(`/admin/aftersales/${id}/${action}`, {
+) => api<AfterSaleRecord>(`/api/admin/aftersales/${id}/${action}`, {
   method: 'POST',
   body: JSON.stringify({ reason }),
 })
