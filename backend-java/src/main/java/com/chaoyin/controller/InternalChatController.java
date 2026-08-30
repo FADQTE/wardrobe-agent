@@ -32,7 +32,7 @@ public class InternalChatController {
     @GetMapping("/sessions/{id}/messages")
     public ApiResponse<List<ChatMessage>> messages(@PathVariable String id,
                                                    @RequestParam(defaultValue = "200") int limit) {
-        return ApiResponse.ok(chatSessionService.internalMessages(id, limit));
+        return ApiResponse.ok(chatSessionService.internalMessagesCached(id, limit));
     }
 
     @PostMapping("/messages")

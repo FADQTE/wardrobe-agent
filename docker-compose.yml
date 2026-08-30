@@ -39,6 +39,39 @@ services:
       timeout: 5s
       retries: 60
 
+  # 会话缓存：键绑定用户身份 chat:hist:{userId}:{sessionId}，归属校验前置，写即失效
+  redis:
+    image: redis:7-alpine
+    container_name: wardrobe-redis
+    ports:
+      - "16549:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # RocketMQ lite topic：固定主题 + shardingKey=sessionId 队列哈希 → 会话级 FIFO，削峰填谷
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.1
+    container_name: wardrobe-rmq-namesrv
+    command: sh mqnamesrv
+    ports:
+      - "16550:9876"
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.1
+    container_name: wardrobe-rmq-broker
+    command: sh mqbroker -n rocketmq-namesrv:9876 -c /home/rocketmq/broker.conf
+    ports:
+      - "16551:16551"
+    volumes:
+      - ./scripts/rmq/broker.conf:/home/rocketmq/broker.conf:ro
+    depends_on:
+      - rocketmq-namesrv
+
   # 可选：本地 LLM（qwen2.5 等），默认不启动，需要时: docker compose --profile ollama up -d
   ollama:
     image: ollama/ollama:latest
@@ -52,4 +85,5 @@ services:
 volumes:
   mysql-data:
   es-data:
+  redis-data:
   ollama-data:

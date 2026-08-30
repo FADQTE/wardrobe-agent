@@ -24,6 +24,7 @@ public class ChatSessionService {
     private final ChatMessageMapper messageMapper;
     private final TraceEventMapper traceEventMapper;
     private final TryonTaskMapper tryonTaskMapper;
+    private final ChatHistoryCache historyCache;
 
     public List<ChatSession> list(Long userId) {
         return sessionMapper.selectList(new QueryWrapper<ChatSession>()
@@ -60,11 +61,19 @@ public class ChatSessionService {
         traceEventMapper.delete(new QueryWrapper<com.chaoyin.entity.TraceEvent>().eq("session_id", id));
         tryonTaskMapper.delete(new QueryWrapper<com.chaoyin.entity.TryonTask>().eq("session_id", id));
         sessionMapper.deleteById(id);
+        historyCache.evict(userId, id);
     }
 
     public List<ChatMessage> messages(String id, Long userId, int limit) {
         requireOwned(id, userId);
-        return internalMessages(id, limit);
+        // 归属校验已通过；缓存键绑定该用户身份，读不到别人的历史
+        List<ChatMessage> cached = historyCache.get(userId, id);
+        if (cached != null) {
+            return cached.size() > limit ? cached.subList(cached.size() - limit, cached.size()) : cached;
+        }
+        List<ChatMessage> rows = internalMessages(id, limit);
+        historyCache.put(userId, id, rows);
+        return rows;
     }
 
     public ChatSession requireOwned(String id, Long userId) {
@@ -121,6 +130,24 @@ public class ChatSessionService {
         return rows;
     }
 
+    /**
+     * Agent 内部读历史：owner 从会话行解出（内部接口不接受客户端自报身份），
+     * 缓存键同样绑定 owner 身份；缓存失效时回源 DB。
+     */
+    public List<ChatMessage> internalMessagesCached(String id, int limit) {
+        ChatSession session = sessionMapper.selectById(id);
+        if (session == null) {
+            throw new BizException(404, "会话不存在");
+        }
+        List<ChatMessage> cached = historyCache.get(session.getUserId(), id);
+        if (cached != null) {
+            return cached.size() > limit ? cached.subList(cached.size() - limit, cached.size()) : cached;
+        }
+        List<ChatMessage> rows = internalMessages(id, limit);
+        historyCache.put(session.getUserId(), id, rows);
+        return rows;
+    }
+
     public void internalAppend(ChatMessage message) {
         ChatSession session = sessionMapper.selectById(message.getSessionId());
         if (session == null) throw new BizException(404, "写入消息前必须先创建会话");
@@ -129,5 +156,7 @@ public class ChatSessionService {
         messageMapper.insert(message);
         session.setUpdatedAt(LocalDateTime.now());
         sessionMapper.updateById(session);
+        // 写即失效：只失效 owner 自己的缓存键
+        historyCache.evict(session.getUserId(), message.getSessionId());
     }
 }

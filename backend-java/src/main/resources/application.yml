@@ -9,6 +9,11 @@ spring:
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: localhost
+      port: 16549
+      timeout: 2s
   sql:
     init:
       # Docker 初始化 SQL 只会在新数据卷执行；该增量脚本保证旧环境也能安全补表。
@@ -23,6 +28,13 @@ spring:
         sse-endpoint: /mcp/sse
         sse-message-endpoint: /mcp/message
 
+rocketmq:
+  name-server: localhost:16550
+  producer:
+    group: chat-turn-producer
+    send-message-timeout: 3000
+    retry-times-when-send-failed: 1
+
 app:
   agent-url: http://localhost:16546
   # Agent 调 Java 业务接口时使用；生产环境必须通过环境变量覆盖。
@@ -31,6 +43,15 @@ app:
     token-hours: ${AUTH_TOKEN_HOURS:168}
   netty:
     port: 16547
+  cache:
+    # 会话历史缓存 TTL；键为 chat:hist:{userId}:{sessionId}，写即失效
+    history-ttl-seconds: ${CHAT_HISTORY_TTL:600}
+  mq:
+    # RocketMQ 削峰开关：关闭或发送失败时 WS 轮次直接同步转发 Agent（降级路径）
+    enabled: ${CHAT_MQ_ENABLED:true}
+    chat-turn-topic: chat_turn_topic
+    # lite topic 队列数：会话哈希落队列，单队列内严格 FIFO
+    queue-count: 8
 
 mybatis-plus:
   configuration:

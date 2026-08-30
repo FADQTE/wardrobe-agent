@@ -65,6 +65,24 @@
 - Java 服务：http://localhost:16545
 - Agent 服务：http://localhost:16546
 - WebSocket：ws://localhost:16547/ws/chat
+- Redis（会话缓存）：localhost:16549
+- RocketMQ（namesrv / broker）：localhost:16550 / 16551
+
+## 高并发与缓存
+
+C 端并发的两条主线，均不影响既有接口契约：
+
+- **RocketMQ lite topic 削峰**：WS 聊天轮次不再由 4 线程池同步转发，而是发送到固定主题
+  `chat_turn_topic`（不做每会话独立 topic，避免 topic 爆炸），发送时以 `sessionId` 为
+  shardingKey 哈希选队列——同一会话严格 FIFO，不同会话分散到 8 个队列并行；消费端
+  （ORDERLY）按队列数限速驱动 Agent，高峰期请求排队而不是把 LLM 打挂。入队即回推
+  「排队处理中」状态事件；MQ 关闭（`CHAT_MQ_ENABLED=false`）或发送失败自动降级为
+  线程池同步转发，SSE 直连路径保持不变。
+- **Redis 会话缓存**：会话历史缓存于 `chat:hist:{userId}:{sessionId}`，用户读历史与
+  Agent 装载记忆共用。隐私三原则：① 键绑定服务端身份（userId 只来自 token/会话行，
+  绝不接受客户端自报）；② 归属校验前置（`requireOwned` 先于任何缓存读取，缓存只是
+  加速层不是授权层）；③ 写即失效 + 短 TTL（append/delete 立刻 evict 本人键，默认
+  TTL 10 分钟）。Redis 不可用时全量降级回源 DB。
 
 ## 手动启动
 
