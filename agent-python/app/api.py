@@ -47,7 +47,7 @@ def _sse(ev: dict) -> str:
     return f"data: {json.dumps(ev, ensure_ascii=False, default=str)}\n\n"
 
 
-def _history_meta(final_state: dict | None) -> dict:
+def _history_meta(final_state: dict | None, suggestions: list[str] | None = None) -> dict:
     """从本轮事件中提取重进页面后仍可恢复的富展示数据。"""
     meta: dict = {}
     for ev in (final_state or {}).get("events", []):
@@ -68,6 +68,8 @@ def _history_meta(final_state: dict | None) -> dict:
             }
         elif ev.get("type") == "handoff":
             meta["handoff"] = data.get("reason")
+    if suggestions:
+        meta["suggestions"] = suggestions
     return {k: v for k, v in meta.items() if v is not None}
 
 
@@ -281,14 +283,17 @@ async def chat(req: ChatRequest, request: Request):
 
             await memory.save()
             text = (final_state or {}).get("final_text", "") or ""
-            await memory.append_message("assistant", text, _history_meta(final_state))
+            # 追问建议：按本轮任务与结果派生，随 done 下发并存入消息 meta（历史恢复仍可见）
+            from .suggestions import build_followups
+            followups = build_followups(final_state or {})
+            await memory.append_message("assistant", text, _history_meta(final_state, followups))
             assistant_saved = True
             for i in range(0, len(text), 8):
                 async for sse_line in emit({"type": "token", "data": {"text": text[i:i + 8]}}):
                     yield sse_line
                 await asyncio.sleep(0.015)
             async for sse_line in emit({"type": "done", "data": {
-                    "reply": text, "sessionId": req.session_id,
+                    "reply": text, "sessionId": req.session_id, "suggestions": followups,
                     "latencyMs": int((time.monotonic() - turn_started) * 1000)}}):
                 yield sse_line
             await trace.wait()

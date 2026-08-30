@@ -28,6 +28,7 @@ interface ChatMsg {
   handoff?: string
   error?: boolean
   thinking?: boolean
+  suggestions?: string[]
 }
 
 const WELCOME: ChatMsg = {
@@ -37,12 +38,12 @@ const WELCOME: ChatMsg = {
     '你好，我是穿搭助手 🧥\n我可以：\n· 用你衣橱里的单品搭配\n· 按季节、场景和风格提供建议\n· 生成换装效果图\n· 查询商品、收藏和下单\n你可以直接描述想要的穿搭。',
 }
 
-const EXAMPLES = [
-  '用我衣橱里的白衬衫搭一套秋季通勤装',
-  '裤子换成商城在售的，预算 300 以内',
-  '生成一张效果图看看',
-  '现在商城有什么活动？',
-  '帮我看看这件衣服',
+// 新对话引导：按真实使用场景分组，问法贴近日常表达
+const EXAMPLE_GROUPS: { icon: string; label: string; items: string[] }[] = [
+  { icon: '👗', label: '穿搭搭配', items: ['下周要面试，用我衣橱里的衣服搭一套正式的', '秋天周末约会穿什么？帮我从衣橱里选一套'] },
+  { icon: '🛍️', label: '商城选购', items: ['有没有 300 以内的白色衬衫，想替换我那件旧的', '挑一双适合每天通勤的鞋，预算 400 以内'] },
+  { icon: '🎁', label: '优惠活动', items: ['现在有什么优惠活动？', '新人专享券要满足什么条件才能用'] },
+  { icon: '📦', label: '订单售后', items: ['查一下我最近的订单到哪了', '买回来尺码不合适，怎么申请退换'] },
 ]
 
 let msgId = 1
@@ -348,7 +349,7 @@ function ChatWorkspace({ session, onSessionChanged }: ChatWorkspaceProps) {
         setSending(false)
         break
       case 'done':
-        patch({ thinking: false })
+        patch({ thinking: false, suggestions: ev.data?.suggestions ?? [] })
         setSending(false)
         break
       case 'pong':
@@ -553,7 +554,7 @@ function ChatWorkspace({ session, onSessionChanged }: ChatWorkspaceProps) {
     setSending(false)
   }
 
-  const renderMsg = (m: ChatMsg) => {
+  const renderMsg = (m: ChatMsg, isLast = false) => {
     if (m.role === 'user') {
       return (
         <div key={m.id} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
@@ -637,6 +638,14 @@ function ChatWorkspace({ session, onSessionChanged }: ChatWorkspaceProps) {
               </div>
             )}
           </div>
+          {isLast && !m.thinking && !sending && (m.suggestions?.length ?? 0) > 0 && (
+            <div className="chat-followups">
+              <span className="chat-followups-label">继续问</span>
+              {m.suggestions!.map((s) => (
+                <Tag key={s} className="chat-followup-chip" onClick={() => send(s)}>{s}</Tag>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -648,16 +657,20 @@ function ChatWorkspace({ session, onSessionChanged }: ChatWorkspaceProps) {
         <div ref={listRef} style={{ flex: 1, overflow: 'auto', padding: 16 }}>
           {historyLoading
             ? <div style={{ minHeight: 180, display: 'grid', placeItems: 'center' }}><Spin aria-label="正在恢复对话记录" /></div>
-            : messages.map(renderMsg)}
+            : messages.map((m, idx) => renderMsg(m, idx === messages.length - 1))}
         </div>
         {!historyLoading && messages.length <= 1 && (
-          <div style={{ padding: '0 16px 8px' }}>
-            <Space wrap>
-              {EXAMPLES.map((e) => (
-                <Tag key={e} style={{ cursor: 'pointer', padding: '4px 8px' }} color="blue"
-                  onClick={() => send(e)}>{e}</Tag>
-              ))}
-            </Space>
+          <div className="chat-examples">
+            {EXAMPLE_GROUPS.map((group) => (
+              <div key={group.label} className="chat-example-group">
+                <div className="chat-example-label">{group.icon} {group.label}</div>
+                <Space wrap size={6}>
+                  {group.items.map((e) => (
+                    <Tag key={e} className="chat-example-chip" onClick={() => send(e)}>{e}</Tag>
+                  ))}
+                </Space>
+              </div>
+            ))}
           </div>
         )}
         <div style={{ borderTop: '1px solid #f0f0f0', padding: 10, display: 'flex', gap: 8, alignItems: 'center' }}>
