@@ -1,61 +1,52 @@
 package com.chaoyin.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.chaoyin.common.ApiResponse;
 import com.chaoyin.entity.ChatMessage;
 import com.chaoyin.entity.ChatSession;
-import com.chaoyin.mapper.ChatMessageMapper;
-import com.chaoyin.mapper.ChatSessionMapper;
+import com.chaoyin.service.ChatSessionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
-/**
- * 会话持久化：Agent 通过内部接口保存 Session Memory 状态与消息记录。
- */
+/** 面向已登录用户的会话管理接口。 */
 @RestController
-@RequestMapping("/api/chat")
+@RequestMapping("/api/chat/sessions")
 @RequiredArgsConstructor
 public class ChatController {
+    private final ChatSessionService chatSessionService;
 
-    private final ChatSessionMapper sessionMapper;
-    private final ChatMessageMapper messageMapper;
-
-    @PostMapping("/sessions")
-    public ApiResponse<ChatSession> upsertSession(@RequestBody ChatSession session) {
-        ChatSession exist = sessionMapper.selectById(session.getId());
-        if (exist == null) {
-            sessionMapper.insert(session);
-        } else {
-            sessionMapper.updateById(session);
-        }
-        return ApiResponse.ok(session);
+    public record RenameRequest(String title) {
     }
 
-    @GetMapping("/sessions/{id}/messages")
-    public ApiResponse<List<ChatMessage>> messages(@PathVariable String id,
-                                                   @RequestParam(defaultValue = "200") int limit) {
-        // 只取最近 limit 条再正序返回：长会话不再每轮全量拉取
-        List<ChatMessage> rows = messageMapper.selectList(new QueryWrapper<ChatMessage>()
-                .eq("session_id", id).orderByDesc("id")
-                .last("LIMIT " + Math.max(1, Math.min(limit, 500))));
-        Collections.reverse(rows);
-        return ApiResponse.ok(rows);
+    @GetMapping
+    public ApiResponse<List<ChatSession>> list(@RequestAttribute("currentUserId") Long userId) {
+        return ApiResponse.ok(chatSessionService.list(userId));
     }
 
-    @PostMapping("/messages")
-    public ApiResponse<Void> appendMessage(@RequestBody ChatMessage message) {
-        message.setId(null);
-        messageMapper.insert(message);
+    @PostMapping
+    public ApiResponse<ChatSession> create(@RequestAttribute("currentUserId") Long userId) {
+        return ApiResponse.ok(chatSessionService.create(userId));
+    }
+
+    @PatchMapping("/{id}")
+    public ApiResponse<ChatSession> rename(@PathVariable String id,
+                                           @RequestAttribute("currentUserId") Long userId,
+                                           @RequestBody RenameRequest request) {
+        return ApiResponse.ok(chatSessionService.rename(id, userId, request.title()));
+    }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> delete(@PathVariable String id,
+                                    @RequestAttribute("currentUserId") Long userId) {
+        chatSessionService.delete(id, userId);
         return ApiResponse.ok(null);
     }
 
-    @GetMapping("/sessions/{id}")
-    public ApiResponse<Map<String, Object>> sessionState(@PathVariable String id) {
-        ChatSession session = sessionMapper.selectById(id);
-        return ApiResponse.ok(session == null ? Map.of() : Map.of("state", session.getState() == null ? "" : session.getState()));
+    @GetMapping("/{id}/messages")
+    public ApiResponse<List<ChatMessage>> messages(@PathVariable String id,
+                                                   @RequestAttribute("currentUserId") Long userId,
+                                                   @RequestParam(defaultValue = "200") int limit) {
+        return ApiResponse.ok(chatSessionService.messages(id, userId, limit));
     }
 }

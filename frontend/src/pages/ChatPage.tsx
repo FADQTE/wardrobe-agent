@@ -1,13 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
-  Button, Card, Col, Image as AntImage, Input, Row, Space, Spin, Tag, Typography,
+  Button, Card, Col, Dropdown, Empty, Image as AntImage, Input, Modal, Row, Space, Spin, Tag, Typography, message,
 } from 'antd'
-import { AuditOutlined, ExperimentOutlined, RobotOutlined, SendOutlined, UserOutlined } from '@ant-design/icons'
+import {
+  AuditOutlined, DeleteOutlined, EditOutlined, ExperimentOutlined, MessageOutlined,
+  MoreOutlined, PlusOutlined, RobotOutlined, SearchOutlined, SendOutlined, UserOutlined,
+} from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useUser } from '../App'
-import { getChatMessages, PersistedChatMessage, Product } from '../api'
+import {
+  ChatSession, createChatSession, deleteChatSession, getAccessToken, getChatMessages,
+  listChatSessions, PersistedChatMessage, Product, renameChatSession,
+} from '../api'
 import PlanPanel, { PlanData, ProgressLine } from '../components/PlanPanel'
 
 interface ChatMsg {
@@ -72,6 +78,188 @@ function MarkdownText({ text }: { text: string }) {
 
 export default function ChatPage() {
   const { user } = useUser()
+  const { sessionId: routeSessionId } = useParams()
+  const navigate = useNavigate()
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [activeSession, setActiveSession] = useState<ChatSession | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [search, setSearch] = useState('')
+  const [renameTarget, setRenameTarget] = useState<ChatSession | null>(null)
+  const [renameTitle, setRenameTitle] = useState('')
+
+  const selectSession = (session: ChatSession, replace = false) => {
+    setActiveSession(session)
+    if (user) localStorage.setItem(`cy_session_id_${user.id}`, session.id)
+    navigate(`/chat/${session.id}`, { replace })
+  }
+
+  useEffect(() => {
+    if (!user) return
+    let active = true
+    const initialize = async () => {
+      setLoading(true)
+      try {
+        let rows = await listChatSessions()
+        // React StrictMode 会在开发环境重放 effect；失活的首轮不能再创建空会话。
+        if (!active) return
+        if (!rows.length) rows = [await createChatSession()]
+        if (!active) return
+        setSessions(rows)
+        const remembered = localStorage.getItem(`cy_session_id_${user.id}`)
+        const selected = rows.find((item) => item.id === routeSessionId)
+          ?? rows.find((item) => item.id === remembered)
+          ?? rows[0]
+        selectSession(selected, routeSessionId !== selected.id)
+      } catch (error: any) {
+        message.error(error?.message || '会话加载失败')
+      } finally {
+        if (active) setLoading(false)
+      }
+    }
+    void initialize()
+    return () => { active = false }
+  }, [user?.id])
+
+  useEffect(() => {
+    if (!routeSessionId || !sessions.length) return
+    const target = sessions.find((item) => item.id === routeSessionId)
+    if (target && target.id !== activeSession?.id) setActiveSession(target)
+  }, [routeSessionId, sessions])
+
+  const createNew = async () => {
+    if (creating) return
+    setCreating(true)
+    try {
+      const created = await createChatSession()
+      setSessions((current) => [created, ...current])
+      selectSession(created)
+    } catch (error: any) {
+      message.error(error?.message || '新建对话失败')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const saveRename = async () => {
+    if (!renameTarget) return
+    try {
+      const updated = await renameChatSession(renameTarget.id, renameTitle)
+      setSessions((current) => current.map((item) => item.id === updated.id ? updated : item))
+      if (activeSession?.id === updated.id) setActiveSession(updated)
+      setRenameTarget(null)
+    } catch (error: any) {
+      message.error(error?.message || '重命名失败')
+    }
+  }
+
+  const confirmDelete = (session: ChatSession) => {
+    Modal.confirm({
+      title: '删除这段对话？',
+      content: `“${session.title || '新对话'}”及其全部消息将被永久删除。`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        await deleteChatSession(session.id)
+        let remaining = sessions.filter((item) => item.id !== session.id)
+        if (!remaining.length) remaining = [await createChatSession()]
+        setSessions(remaining)
+        if (activeSession?.id === session.id) selectSession(remaining[0], true)
+        message.success('会话已删除')
+      },
+    })
+  }
+
+  const visibleSessions = useMemo(() => {
+    const keyword = search.trim().toLowerCase()
+    return keyword ? sessions.filter((item) => (item.title || '新对话').toLowerCase().includes(keyword)) : sessions
+  }, [sessions, search])
+
+  const updateSession = (updated: ChatSession) => {
+    setSessions((current) => current.map((item) => item.id === updated.id ? updated : item))
+    if (activeSession?.id === updated.id) setActiveSession(updated)
+  }
+
+  return (
+    <div className="chat-page-shell">
+      <aside className="session-sidebar">
+        <Button type="primary" icon={<PlusOutlined />} block size="large" loading={creating} onClick={createNew}>
+          新建对话
+        </Button>
+        <Input
+          allowClear prefix={<SearchOutlined />} placeholder="搜索会话"
+          value={search} onChange={(event) => setSearch(event.target.value)}
+        />
+        <div className="session-list">
+          {loading ? (
+            <div className="session-loading"><Spin size="small" /></div>
+          ) : visibleSessions.length ? visibleSessions.map((session) => (
+            <button
+              type="button" key={session.id}
+              className={`session-item ${activeSession?.id === session.id ? 'active' : ''}`}
+              onClick={() => selectSession(session)}
+            >
+              <MessageOutlined className="session-icon" />
+              <span className="session-copy">
+                <span className="session-title">{session.title || '新对话'}</span>
+                <span className="session-time">
+                  {session.updatedAt ? new Date(session.updatedAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '刚刚'}
+                </span>
+              </span>
+              <Dropdown
+                trigger={['click']}
+                menu={{
+                  onClick: ({ key, domEvent }) => {
+                    domEvent.stopPropagation()
+                    if (key === 'rename') {
+                      setRenameTarget(session)
+                      setRenameTitle(session.title || '新对话')
+                    } else if (key === 'delete') confirmDelete(session)
+                  },
+                  items: [
+                    { key: 'rename', icon: <EditOutlined />, label: '重命名' },
+                    { type: 'divider' },
+                    { key: 'delete', icon: <DeleteOutlined />, danger: true, label: '删除' },
+                  ],
+                }}
+              >
+                <span className="session-more" role="button" onClick={(event) => event.stopPropagation()}><MoreOutlined /></span>
+              </Dropdown>
+            </button>
+          )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的会话" />}
+        </div>
+      </aside>
+
+      <main className="chat-workspace-host">
+        {activeSession ? (
+          <ChatWorkspace key={activeSession.id} session={activeSession} onSessionChanged={updateSession} />
+        ) : (
+          <div className="chat-empty"><Spin tip="正在准备新对话…" /></div>
+        )}
+      </main>
+
+      <Modal
+        title="重命名会话" open={!!renameTarget} okText="保存" cancelText="取消"
+        onOk={saveRename} onCancel={() => setRenameTarget(null)}
+      >
+        <Input
+          autoFocus maxLength={60} showCount value={renameTitle}
+          onChange={(event) => setRenameTitle(event.target.value)}
+          onPressEnter={() => void saveRename()}
+        />
+      </Modal>
+    </div>
+  )
+}
+
+interface ChatWorkspaceProps {
+  session: ChatSession
+  onSessionChanged: (session: ChatSession) => void
+}
+
+function ChatWorkspace({ session, onSessionChanged }: ChatWorkspaceProps) {
+  const { user } = useUser()
   const [messages, setMessages] = useState<ChatMsg[]>([WELCOME])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -81,7 +269,7 @@ export default function ChatPage() {
   const [panelWidth, setPanelWidth] = useState(440)
   const navigate = useNavigate()
   const listRef = useRef<HTMLDivElement>(null)
-  const sessionRef = useRef<string>(localStorage.getItem('cy_session_id') || '')
+  const sessionRef = useRef<string>(session.id)
   const userRef = useRef(user)
   userRef.current = user
   const asstIdRef = useRef(0)
@@ -168,8 +356,9 @@ export default function ChatPage() {
   const connectWs = () => {
     if (!sessionRef.current) return
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    const token = getAccessToken()
     const ws = new WebSocket(
-      `${proto}://${location.host}/ws/chat?sessionId=${encodeURIComponent(sessionRef.current)}&userId=${userRef.current?.id ?? 1}`,
+      `${proto}://${location.host}/ws/chat?sessionId=${encodeURIComponent(sessionRef.current)}&userId=${userRef.current?.id ?? 1}&token=${encodeURIComponent(token)}`,
     )
     wsRef.current = ws
     setWsState('connecting')
@@ -217,10 +406,6 @@ export default function ChatPage() {
 
   useEffect(() => {
     let active = true
-    if (!sessionRef.current) {
-      sessionRef.current = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
-      localStorage.setItem('cy_session_id', sessionRef.current)
-    }
 
     const loadHistory = async (attempt = 0): Promise<boolean> => {
       try {
@@ -310,6 +495,14 @@ export default function ChatPage() {
     const asst: ChatMsg = { id: msgId++, role: 'assistant', text: '', thinking: true }
     asstIdRef.current = asst.id
     setMessages((m) => [...m, userMsg, asst])
+    if (session.title === '新对话') {
+      const title = content.replace(/\s+/g, ' ').slice(0, 30)
+      void renameChatSession(session.id, title)
+        .then(onSessionChanged)
+        .catch(() => undefined)
+    } else {
+      onSessionChanged({ ...session, updatedAt: new Date().toISOString() })
+    }
 
     // WS 已连接 → 全双工走 Netty（发送 + 推送）；断开 → 降级 SSE
     const ws = wsRef.current
@@ -323,7 +516,10 @@ export default function ChatPage() {
     try {
       const res = await fetch('/agent/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getAccessToken()}`,
+        },
         body: JSON.stringify({
           session_id: sessionRef.current, user_id: uid, message: content, transport: 'sse',
           member_level: runtime.memberLevel, risk_level: runtime.riskLevel, page_context: runtime.pageContext,
@@ -435,7 +631,7 @@ export default function ChatPage() {
   }
 
   return (
-    <div style={{ display: 'flex', gap: 12, height: 'calc(100vh - 120px)' }}>
+    <div style={{ display: 'flex', gap: 12, height: '100%' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0' }}>
         <div ref={listRef} style={{ flex: 1, overflow: 'auto', padding: 16 }}>
           {historyLoading
