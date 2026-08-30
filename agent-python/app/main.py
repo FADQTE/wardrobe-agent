@@ -24,6 +24,8 @@ async def health():
         "status": "ok",
         "service": "chaoyin-agent",
         "mockAgent": config.MOCK_AGENT or not config.LLM_API_KEY,
+        "llm": config.LLM_MODEL,
+        "llmBaseUrl": config.LLM_BASE_URL,
         "es": get_es().ping(),
         "embedding": config.EMBEDDING_MODE,
     }

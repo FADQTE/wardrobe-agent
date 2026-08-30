@@ -49,4 +49,14 @@ public class TraceController {
                 .orderByAsc("id")
                 .last("LIMIT " + Math.min(Math.max(limit, 1), 500))));
     }
+
+    /** 会话列表：每会话事件数/时间范围（可观测页的会话选择器）。 */
+    @GetMapping("/sessions")
+    public ApiResponse<List<Map<String, Object>>> sessions() {
+        return ApiResponse.ok(traceEventMapper.selectMaps(new QueryWrapper<TraceEvent>()
+                .select("session_id AS sessionId, COUNT(*) AS eventCount, MIN(created_at) AS firstAt, MAX(created_at) AS lastAt")
+                .groupBy("session_id")
+                .orderByDesc("lastAt")
+                .last("LIMIT 100")));
+    }
 }

@@ -162,5 +162,16 @@ export interface TraceEvent {
 export const getTrace = (sessionId: string, limit = 200) =>
   api<TraceEvent[]>(`/api/internal/trace/${sessionId}?limit=${limit}`)
 
+export interface TraceSession {
+  sessionId: string
+  eventCount: number
+  firstAt: string
+  lastAt: string
+}
+
+export const getTraceSessions = () => api<TraceSession[]>('/api/internal/trace/sessions')
+
 export const runEval = () =>
   fetch('/agent/eval/run', { method: 'POST' }).then((r) => r.json())
+
+export const getAgentHealth = () => fetch('/agent/health').then((r) => r.json())

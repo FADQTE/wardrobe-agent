@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
-  Button, Card, Col, Empty, Image as AntImage, Input, Modal, Row, Space, Tag, Typography,
+  Button, Card, Col, Empty, Image as AntImage, Input, Row, Space, Tag, Typography,
 } from 'antd'
 import { AuditOutlined, ExperimentOutlined, RobotOutlined, SendOutlined, UserOutlined } from '@ant-design/icons'
 import { useUser } from '../App'
-import { Product, runEval } from '../api'
+import { Product } from '../api'
 import PlanPanel, { PlanData, ProgressLine } from '../components/PlanPanel'
 
 interface ChatMsg {
@@ -45,9 +46,8 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false)
   const [plan, setPlan] = useState<PlanData>({})
   const [wsState, setWsState] = useState<'connecting' | 'open' | 'closed'>('closed')
-  const [evalOpen, setEvalOpen] = useState(false)
-  const [evalReport, setEvalReport] = useState<any>(null)
-  const [evalLoading, setEvalLoading] = useState(false)
+  const [panelWidth, setPanelWidth] = useState(440)
+  const navigate = useNavigate()
   const listRef = useRef<HTMLDivElement>(null)
   const sessionRef = useRef<string>(localStorage.getItem('cy_session_id') || '')
   const userRef = useRef(user)
@@ -165,16 +165,19 @@ export default function ChatPage() {
     retryRef.current = window.setTimeout(connectWs, delay)
   }
 
-  const doEval = async () => {
-    setEvalOpen(true)
-    setEvalLoading(true)
-    try {
-      const res = await runEval()
-      setEvalReport(res.data)
-    } catch {
-      setEvalReport(null)
+  // 右侧面板宽度拖拽调整（340~680px）
+  const startDrag = (e: React.MouseEvent) => {
+    const startX = e.clientX
+    const startW = panelWidth
+    const onMove = (ev: MouseEvent) => {
+      setPanelWidth(Math.min(680, Math.max(340, startW + (startX - ev.clientX))))
     }
-    setEvalLoading(false)
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
   }
 
   useEffect(() => {
@@ -355,7 +358,7 @@ export default function ChatPage() {
             {wsState === 'open' && <Tag color="green">Netty WS 已连接</Tag>}
             {wsState === 'connecting' && <Tag color="orange">WS 连接中…</Tag>}
             {wsState === 'closed' && <Tag>SSE 降级模式</Tag>}
-            <Button size="small" icon={<AuditOutlined />} onClick={doEval}>回归评测</Button>
+            <Button size="small" icon={<AuditOutlined />} onClick={() => navigate('/observe')}>可观测</Button>
           </Space>
           <Button icon={<ExperimentOutlined />} onClick={() => send('基于当前搭配生成一张换装效果图')} disabled={sending}>
             生成效果图
@@ -368,34 +371,18 @@ export default function ChatPage() {
           <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={() => send()}>发送</Button>
         </div>
       </div>
-      <div style={{ width: 400, background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0', padding: 12, overflow: 'auto' }}>
-        <Typography.Text strong style={{ fontSize: 13 }}>Agent 编排过程</Typography.Text>
-        <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginBottom: 8 }}>
-          意图识别 → 依赖 DAG（无依赖并行/依赖按拓扑顺序）→ 工具调用（MCP/RAG）→ 汇总回复
-        </Typography.Paragraph>
-        <PlanPanel data={plan} sessionId={sessionRef.current} />
+      {/* 拖拽手柄 */}
+      <div
+        onMouseDown={startDrag}
+        style={{ width: 6, cursor: 'col-resize', background: 'transparent', borderRadius: 4 }}
+        title="拖动调整面板宽度"
+      />
+      <div style={{ width: panelWidth, flexShrink: 0, background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0', padding: 12, display: 'flex', flexDirection: 'column' }}>
+        <PlanPanel data={plan} />
+        <div style={{ marginTop: 8, borderTop: '1px solid #f0f0f0', paddingTop: 8, fontSize: 12 }}>
+          <a onClick={() => navigate('/observe')}>完整 Trace · 回归评测 · 模型配置 → 可观测页</a>
+        </div>
       </div>
-
-      <Modal
-        title="回归评测（eval_report）" open={evalOpen} onCancel={() => setEvalOpen(false)} footer={null} width={560}
-      >
-        {evalLoading ? <Typography.Text type="secondary">评测运行中（约 10 秒，走真实工具链路）…</Typography.Text> : evalReport ? (
-          <div>
-            <Tag color={evalReport.failed === 0 ? 'green' : 'red'} style={{ marginBottom: 8 }}>
-              passed={evalReport.passed} failed={evalReport.failed} total={evalReport.total}
-            </Tag>
-            {evalReport.cases?.map((c: any) => (
-              <div key={c.id} style={{ fontSize: 12, marginBottom: 4 }}>
-                <Space size={4}>
-                  <Tag color={c.passed ? 'green' : 'red'}>{c.passed ? 'PASS' : 'FAIL'}</Tag>
-                  <span>{c.name}</span>
-                  {c.failures?.length ? <Tag color="volcano">{c.failures.join(', ')}</Tag> : null}
-                </Space>
-              </div>
-            ))}
-          </div>
-        ) : <Typography.Text type="danger">评测接口不可用（请确认 Agent 服务已启动）</Typography.Text>}
-      </Modal>
     </div>
   )
 }

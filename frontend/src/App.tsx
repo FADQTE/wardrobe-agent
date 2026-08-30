@@ -3,6 +3,7 @@ import { ConfigProvider, Layout, Menu, Avatar, message } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import {
   AppstoreOutlined,
+  DashboardOutlined,
   HddOutlined,
   RobotOutlined,
   ScheduleOutlined,
@@ -12,6 +13,7 @@ import WardrobePage from './pages/WardrobePage'
 import MallPage from './pages/MallPage'
 import ChatPage from './pages/ChatPage'
 import RulesPage from './pages/RulesPage'
+import ObservePage from './pages/ObservePage'
 import { createContext, useContext, useEffect, useState } from 'react'
 import { login, User } from './api'
 
@@ -25,6 +27,7 @@ const menuItems = [
   { key: '/wardrobe', icon: <HddOutlined />, label: '我的衣橱' },
   { key: '/mall', icon: <AppstoreOutlined />, label: '服饰商城' },
   { key: '/rules', icon: <ScheduleOutlined />, label: '规则管理' },
+  { key: '/observe', icon: <DashboardOutlined />, label: '可观测' },
 ]
 
 export default function App() {
@@ -81,6 +84,7 @@ export default function App() {
                 <Route path="/wardrobe" element={<WardrobePage />} />
                 <Route path="/mall" element={<MallPage />} />
                 <Route path="/rules" element={<RulesPage />} />
+                <Route path="/observe" element={<ObservePage />} />
               </Routes>
             </Content>
           </Layout>
