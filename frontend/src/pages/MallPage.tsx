@@ -65,7 +65,7 @@ export default function MallPage() {
   const [submitting, setSubmitting] = useState(false)
   const cartLoaded = useRef(false)
 
-  const cartKey = `cy_cart_${user?.id ?? 'guest'}`
+  const cartKey = `app_cart_${user?.id ?? 'guest'}`
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0)
   const cartTotal = useMemo(
     () => cart.reduce((sum, line) => sum + Number(line.product.price) * line.quantity, 0),
@@ -188,7 +188,7 @@ export default function MallPage() {
 
   const tryOn = (product: Product) => {
     const preset = `用商城在售的「${product.name}」帮我搭一套，并生成换装效果图`
-    sessionStorage.setItem('cy_preset_message', preset)
+    sessionStorage.setItem('app_preset_message', preset)
     window.location.pathname = '/chat'
   }
 
@@ -207,7 +207,7 @@ export default function MallPage() {
     if (!user) return
     Modal.confirm({
       title: `确认模拟支付 ¥${order.totalAmount}？`,
-      content: '这是演示支付，不会产生真实资金扣款。',
+      content: '请确认订单信息。当前环境不会产生真实资金扣款。',
       okText: '确认支付', cancelText: '暂不支付',
       onOk: async () => {
         await payOrder(order.id, user.id)

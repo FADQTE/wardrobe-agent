@@ -1,7 +1,7 @@
 [project]
-name = "chaoyin-agent"
+name = "wardrobe-agent"
 version = "0.2.0"
-description = "潮引智能衣橱商城 - AI 穿搭客服 Agent（FastAPI + LangGraph）"
+description = "智能衣橱穿搭助手（FastAPI + LangGraph）"
 requires-python = ">=3.10"
 dependencies = [
     # Web

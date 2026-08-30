@@ -114,13 +114,6 @@ body {
   box-shadow: 0 24px 80px rgba(42, 55, 91, 0.14);
 }
 
-.demo-account {
-  display: block;
-  margin-top: 16px;
-  text-align: center;
-  font-size: 12px;
-}
-
 @media (max-width: 900px) {
   .login-page {
     grid-template-columns: 1fr;

@@ -12,10 +12,10 @@
     </parent>
 
     <groupId>com.chaoyin</groupId>
-    <artifactId>chaoyin-mall</artifactId>
+    <artifactId>wardrobe-service</artifactId>
     <version>0.1.0</version>
-    <name>chaoyin-mall</name>
-    <description>潮引智能衣橱商城 - Java 业务服务(含 MCP Server)</description>
+    <name>wardrobe-service</name>
+    <description>智能衣橱业务服务（含 MCP Server）</description>
 
     <properties>
         <java.version>17</java.version>

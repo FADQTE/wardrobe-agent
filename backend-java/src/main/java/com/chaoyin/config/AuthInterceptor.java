@@ -20,7 +20,7 @@ public class AuthInterceptor implements HandlerInterceptor {
     private final AuthService authService;
     private final ObjectMapper objectMapper;
 
-    @Value("${chaoyin.internal-api-key:chaoyin-dev-internal-key}")
+    @Value("${app.internal-api-key:local-internal-key}")
     private String internalApiKey;
 
     @Override

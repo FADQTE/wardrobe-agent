@@ -1,4 +1,4 @@
-﻿# 潮引智能衣橱商城 Demo 一键启动脚本
+﻿# 智能衣橱一键启动脚本
 # 用法: 在项目根目录执行  .\start.ps1
 # 前提: Docker Desktop 运行中; JDK17 / Python3.10 / Node24 / pnpm 已安装
 

@@ -16,7 +16,7 @@ public class WebConfig implements WebMvcConfigurer {
         this.authInterceptor = authInterceptor;
     }
 
-    @Value("${chaoyin.upload-dir:./uploads}")
+    @Value("${app.upload-dir:./uploads}")
     private String uploadDir;
 
     @Override

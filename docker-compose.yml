@@ -1,7 +1,7 @@
 services:
   mysql:
     image: mysql:8.0
-    container_name: cy-mysql
+    container_name: wardrobe-mysql
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: chaoyin
@@ -23,7 +23,7 @@ services:
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
-    container_name: cy-es
+    container_name: wardrobe-es
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
@@ -42,7 +42,7 @@ services:
   # 可选：本地 LLM（qwen2.5 等），默认不启动，需要时: docker compose --profile ollama up -d
   ollama:
     image: ollama/ollama:latest
-    container_name: cy-ollama
+    container_name: wardrobe-ollama
     profiles: ["ollama"]
     ports:
       - "11434:11434"

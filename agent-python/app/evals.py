@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Eval 回归评测：/eval/run 跑固定剧本（cases.yaml），断言事件/工具/禁用文本/引用。
+"""Eval 回归评测：/eval/run 跑固定用例（cases.yaml），断言事件/工具/禁用文本/引用。
 
 走真实 Agent 代码路径（真实 ES/MCP/Java），不伪造模型回答或工具结果；
 只报失败类别，不自动归因、不自动修复。

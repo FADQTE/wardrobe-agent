@@ -6,9 +6,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
 @MapperScan("com.chaoyin.mapper")
-public class ChaoyinMallApplication {
+public class WardrobeApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(ChaoyinMallApplication.class, args);
+        SpringApplication.run(WardrobeApplication.class, args);
     }
 }

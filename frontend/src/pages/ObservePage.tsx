@@ -108,7 +108,7 @@ function EvalRunner() {
   return (
     <Card
       title={<span>回归评测 <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 12 }}>
-        · 固定事故剧本断言"事件/工具/引用/禁用文本"，证明改 Prompt/工具后没有顾此失彼</Typography.Text></span>}
+        · 固定异常用例断言"事件/工具/引用/禁用文本"，用于检查 Prompt 或工具调整后的行为</Typography.Text></span>}
       extra={<Button type="primary" size="small" icon={<PlayCircleOutlined />} loading={loading} onClick={run}>
         运行评测（约 10 秒）
       </Button>}

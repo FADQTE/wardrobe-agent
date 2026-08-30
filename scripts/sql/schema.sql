@@ -1,4 +1,4 @@
--- 潮引智能衣橱商城 Demo 初始化脚本（仅在 MySQL 数据卷首次创建时执行）
+-- 智能衣橱初始化脚本（仅在 MySQL 数据卷首次创建时执行）
 CREATE DATABASE IF NOT EXISTS chaoyin DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE chaoyin;
 

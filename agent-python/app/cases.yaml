@@ -1,4 +1,4 @@
-# 固定回归剧本（cases）：每条 case 断言事件/工具/禁用文本/引用。
+# 固定回归用例（cases）：每条 case 断言事件/工具/禁用文本/引用。
 # 说明：评测走真实 Agent 代码路径（真实 ES/MCP/Java），不伪造结果。
 cases:
   - id: c01_outfit

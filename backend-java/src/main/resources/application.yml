@@ -3,7 +3,7 @@ server:
 
 spring:
   application:
-    name: chaoyin-mall
+    name: wardrobe-service
   datasource:
     url: jdbc:mysql://localhost:3307/chaoyin?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
@@ -17,18 +17,18 @@ spring:
   ai:
     mcp:
       server:
-        name: chaoyin-mall-mcp
+        name: wardrobe-mcp
         version: 0.1.0
         type: SYNC
         sse-endpoint: /mcp/sse
         sse-message-endpoint: /mcp/message
 
-chaoyin:
+app:
   agent-url: http://localhost:8000
   # Agent 调 Java 业务接口时使用；生产环境必须通过环境变量覆盖。
-  internal-api-key: ${CHAOYIN_INTERNAL_API_KEY:chaoyin-dev-internal-key}
+  internal-api-key: ${APP_INTERNAL_API_KEY:local-internal-key}
   auth:
-    token-hours: ${CHAOYIN_AUTH_TOKEN_HOURS:168}
+    token-hours: ${AUTH_TOKEN_HOURS:168}
   netty:
     port: 8090
 

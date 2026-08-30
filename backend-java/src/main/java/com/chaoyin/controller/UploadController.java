@@ -18,7 +18,7 @@ import java.util.UUID;
 @RequestMapping("/api")
 public class UploadController {
 
-    @Value("${chaoyin.upload-dir:./uploads}")
+    @Value("${app.upload-dir:./uploads}")
     private String uploadDir;
 
     @PostMapping("/upload")

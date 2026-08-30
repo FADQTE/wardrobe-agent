@@ -2,7 +2,7 @@
 """ES 索引初始化：商品/规则/长期记忆三索引 (product_index / rule_index / memory_index)。
 
 - 中文分词：默认镜像未装 ik 插件，使用 standard 分词（逐字），
-  BM25 + 标签 filter 组合对 demo 场景足够；后续可换 ik。
+  BM25 + 标签 filter 组合适合当前数据量；后续可换 ik。
 - dense_vector：仅当 EMBEDDING_MODE != none 时建向量字段（dims 可配）。
 - memory_index 只作检索索引（MySQL agent_memory 才是事实源）：已存在时不删除重建，
   避免误清空记忆；结构变化可通过 /internal/memory/fullsync 重建。

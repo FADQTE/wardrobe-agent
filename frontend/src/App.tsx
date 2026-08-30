@@ -57,11 +57,11 @@ export default function App() {
       }
     }
     const expired = () => setUser(null)
-    window.addEventListener('cy-auth-expired', expired)
+    window.addEventListener('app-auth-expired', expired)
     void restore()
     return () => {
       active = false
-      window.removeEventListener('cy-auth-expired', expired)
+      window.removeEventListener('app-auth-expired', expired)
     }
   }, [])
 
@@ -96,7 +96,7 @@ export default function App() {
         <Layout style={{ minHeight: '100vh' }}>
           <Sider theme="light" width={176}>
             <div style={{ padding: '14px 16px', fontSize: 16, fontWeight: 700, color: '#1677ff' }}>
-              潮引衣橱商城
+              智能衣橱
             </div>
             <Menu
               mode="inline"
@@ -117,7 +117,7 @@ export default function App() {
               }}
             >
               <span style={{ fontSize: 15, fontWeight: 600 }}>
-                {menuItems.find((m) => m.key === current)?.label ?? '潮引智能衣橱商城'}
+                {menuItems.find((m) => m.key === current)?.label ?? '智能衣橱'}
               </span>
               <Dropdown
                 trigger={['click']}

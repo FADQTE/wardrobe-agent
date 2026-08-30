@@ -35,7 +35,7 @@ export default function LoginPage({ onAuthenticated }: Props) {
         <div className="login-logo"><RobotOutlined /></div>
         <Typography.Title level={1}>让每次穿搭，从一次对话开始</Typography.Title>
         <Typography.Paragraph>
-          登录潮引，保存你的衣橱、偏好与每一段搭配灵感。历史会话会自动同步，随时接着聊。
+          登录后可以保存衣橱、偏好与对话记录，历史会话会自动同步，随时接着聊。
         </Typography.Paragraph>
         <div className="login-feature-grid">
           <div><strong>智能搭配</strong><span>衣橱与商城混合推荐</span></div>
@@ -46,7 +46,7 @@ export default function LoginPage({ onAuthenticated }: Props) {
       <Card className="login-card" bordered={false}>
         <Space direction="vertical" size={6} style={{ width: '100%', marginBottom: 24 }}>
           <Typography.Title level={3} style={{ margin: 0 }}>
-            {mode === 'login' ? '登录潮引' : '创建账号'}
+            {mode === 'login' ? '登录账号' : '创建账号'}
           </Typography.Title>
           <Typography.Text type="secondary">
             {mode === 'login' ? '继续你的专属穿搭旅程' : '建立属于你的智能衣橱'}
@@ -58,7 +58,7 @@ export default function LoginPage({ onAuthenticated }: Props) {
           onChange={(value) => { setMode(value as 'login' | 'register'); form.resetFields() }}
           style={{ marginBottom: 20 }}
         />
-        <Form form={form} layout="vertical" onFinish={submit} initialValues={{ username: 'demo', password: 'demo123' }}>
+        <Form form={form} layout="vertical" onFinish={submit}>
           {mode === 'register' && (
             <Form.Item name="nickname" label="昵称" rules={[{ max: 32, message: '昵称最多 32 个字符' }]}>
               <Input size="large" placeholder="怎么称呼你（选填）" />
@@ -80,7 +80,6 @@ export default function LoginPage({ onAuthenticated }: Props) {
             {mode === 'login' ? '登录' : '注册并登录'}
           </Button>
         </Form>
-        {mode === 'login' && <Typography.Text type="secondary" className="demo-account">演示账号：demo / demo123</Typography.Text>}
       </Card>
     </div>
   )

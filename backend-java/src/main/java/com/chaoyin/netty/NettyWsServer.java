@@ -29,7 +29,7 @@ public class NettyWsServer {
     private final AuthService authService;
     private final ChatSessionService chatSessionService;
 
-    @Value("${chaoyin.netty.port:8090}")
+    @Value("${app.netty.port:8090}")
     private int port;
 
     private EventLoopGroup bossGroup;

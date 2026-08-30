@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Mock 意图解析：无 LLM Key 时按规则拆解，保证演示链路可跑。"""
+"""Mock 意图解析：无 LLM Key 时按规则拆解，保证本地链路可运行。"""
 from __future__ import annotations
 
 import re
@@ -97,7 +97,7 @@ def parse_mock(message: str, memory_desc: str = "") -> dict:
             "summary": "意图不明", "tasks": [],
         }
 
-    # 演示澄清：指代不明（"这件衣服"）且记忆里没有选中单品
+    # 澄清场景：指代不明（"这件衣服"）且记忆里没有选中单品
     if any(k in message for k in ["这件", "那个", "这件衣服", "这个"]) and "衣橱" not in message:
         if not memory_desc or "已选单品" not in memory_desc:
             return {

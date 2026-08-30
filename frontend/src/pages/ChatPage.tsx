@@ -34,7 +34,7 @@ const WELCOME: ChatMsg = {
   id: 0,
   role: 'assistant',
   text:
-    '你好，我是潮引穿搭小助手 🧥\n我可以：\n· 用你衣橱里的单品搭配（含在售商品混合搭配）\n· 按季节/场景/风格推荐，并给出规则来源\n· 生成 AI 换装效果图（mock）\n· 查询商城活动与商品，收藏/下单\n回复与进度经 Netty WS 实时推送（断线自动重连，失败降级 SSE）。\n试试下面的快捷问题，右侧面板会实时展示意图识别与编排 DAG。',
+    '你好，我是穿搭助手 🧥\n我可以：\n· 用你衣橱里的单品搭配\n· 按季节、场景和风格提供建议\n· 生成换装效果图\n· 查询商品、收藏和下单\n你可以直接描述想要的穿搭。',
 }
 
 const EXAMPLES = [
@@ -90,7 +90,7 @@ export default function ChatPage() {
 
   const selectSession = (session: ChatSession, replace = false) => {
     setActiveSession(session)
-    if (user) localStorage.setItem(`cy_session_id_${user.id}`, session.id)
+    if (user) localStorage.setItem(`app_session_id_${user.id}`, session.id)
     navigate(`/chat/${session.id}`, { replace })
   }
 
@@ -106,7 +106,7 @@ export default function ChatPage() {
         if (!rows.length) rows = [await createChatSession()]
         if (!active) return
         setSessions(rows)
-        const remembered = localStorage.getItem(`cy_session_id_${user.id}`)
+        const remembered = localStorage.getItem(`app_session_id_${user.id}`)
         const selected = rows.find((item) => item.id === routeSessionId)
           ?? rows.find((item) => item.id === remembered)
           ?? rows[0]
@@ -459,9 +459,9 @@ function ChatWorkspace({ session, onSessionChanged }: ChatWorkspaceProps) {
       const waitingForAssistant = await loadHistory()
       if (!active) return
       connectWs()
-      const preset = sessionStorage.getItem('cy_preset_message')
+      const preset = sessionStorage.getItem('app_preset_message')
       if (preset && !waitingForAssistant) {
-        sessionStorage.removeItem('cy_preset_message')
+        sessionStorage.removeItem('app_preset_message')
         window.setTimeout(() => send(preset), 300)
       }
     }
@@ -571,7 +571,7 @@ function ChatWorkspace({ session, onSessionChanged }: ChatWorkspaceProps) {
                   {m.products.map((p) => (
                     <Col key={p.id} xs={12} sm={8}>
                       <Card size="small" hoverable
-                        onClick={() => { sessionStorage.setItem('cy_preset_message', `看看商品「${p.name}」的详情`); window.location.pathname = '/mall' }}>
+                        onClick={() => { sessionStorage.setItem('app_preset_message', `看看商品「${p.name}」的详情`); window.location.pathname = '/mall' }}>
                         <img alt={p.name} src={p.imageUrl || '/seed-images/product_1.svg'} style={{ width: '100%', height: 90, objectFit: 'cover', borderRadius: 6 }}
                           onError={(e) => { (e.target as HTMLImageElement).src = '/seed-images/product_1.svg' }} />
                         <div style={{ fontSize: 12, marginTop: 4 }}>{p.name}</div>

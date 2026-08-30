@@ -26,13 +26,13 @@ class AuthServiceTest {
 
     @Test
     void legacyPlaintextPasswordIsUpgradedAndTokenIssued() {
-        User user = user(1L, "demo", "demo123");
+        User user = user(1L, "user", "user123");
         when(userMapper.selectOne(any(QueryWrapper.class))).thenReturn(user);
 
-        AuthService.LoginResult result = authService.login(" Demo ", "demo123");
+        AuthService.LoginResult result = authService.login(" User ", "user123");
 
         assertEquals(1L, result.user().getId());
-        assertTrue(result.token().startsWith("cy_"));
+        assertTrue(result.token().startsWith("auth_"));
         assertTrue(user.getPassword().startsWith("$2"));
         verify(userMapper).updateById(user);
         verify(tokenMapper).insert(any(UserAuthToken.class));
@@ -40,9 +40,9 @@ class AuthServiceTest {
 
     @Test
     void wrongPasswordDoesNotIssueToken() {
-        when(userMapper.selectOne(any(QueryWrapper.class))).thenReturn(user(1L, "demo", "demo123"));
+        when(userMapper.selectOne(any(QueryWrapper.class))).thenReturn(user(1L, "user", "user123"));
 
-        BizException error = assertThrows(BizException.class, () -> authService.login("demo", "wrong"));
+        BizException error = assertThrows(BizException.class, () -> authService.login("user", "wrong"));
 
         assertEquals(401, error.getCode());
         verify(tokenMapper, never()).insert(any(UserAuthToken.class));
@@ -66,7 +66,7 @@ class AuthServiceTest {
         when(userMapper.selectCount(any(QueryWrapper.class))).thenReturn(1L);
 
         BizException error = assertThrows(BizException.class,
-                () -> authService.register("demo", "demo123", "小潮"));
+                () -> authService.register("user", "user123", "用户"));
 
         assertEquals(409, error.getCode());
         verify(userMapper, never()).insert(any(User.class));

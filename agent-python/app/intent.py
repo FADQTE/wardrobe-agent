@@ -16,7 +16,7 @@ VALID_TASK_TYPES = {
 # 写动作/高风险任务：进入后 risk_level=high
 WRITE_TASK_TYPES = {"order"}
 
-INTENT_SYSTEM = """你是「潮引智能衣橱商城」的穿搭客服编排器。把用户的自然语言请求拆解为可执行的任务依赖 DAG。
+INTENT_SYSTEM = """你是智能衣橱的穿搭客服编排器。把用户的自然语言请求拆解为可执行的任务依赖 DAG。
 
 可用任务类型：
 - wardrobe: 查询用户个人衣橱单品。params: {tags: [颜色/品类关键词，如 "白色","衬衫"]}

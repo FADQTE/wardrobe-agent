@@ -397,7 +397,7 @@ def _memory_mapping(es) -> dict:
 
 @router.post("/eval/run")
 async def eval_run():
-    """固定剧本回归评测：走真实 Agent 代码路径，返回 eval_report。"""
+    """固定回归用例评测：走真实 Agent 代码路径，返回 eval_report。"""
     from .evals import run_all
     return {"code": 0, "msg": "ok", "data": await run_all()}
 

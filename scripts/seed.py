@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""种子数据：demo 账号 + 衣橱 14 件 + 商城商品 200 件 + 规则 40 条（含过期/未来/草稿）。
+"""种子数据：基础账号 + 衣橱 14 件 + 商城商品 200 件 + 规则 40 条（含过期/未来/草稿）。
 
 用法（agent-python venv 内）:
     python ../scripts/seed.py
@@ -149,7 +149,7 @@ CATEGORY_CN = {"top": "上装", "bottom": "下装", "outerwear": "外套",
 def gen_products(n=200):
     products = []
     tpl_index = 0
-    # 固定第一件：演示剧本里要搜的"白色衬衫"
+    # 固定第一件：用于验证商品搜索的"白色衬衫"
     products.append({
         "name": "白色衬衫·通勤款", "category": "top", "color": "白色",
         "season": "春秋", "style": "通勤", "tags": ["基础款", "百搭", "纯棉", "免烫"],
@@ -236,7 +236,7 @@ ACTIVITY_RULES = [
     ("双十一预售", ["双十一", "预售"], "定金膨胀，11 月全场狂欢。", 54, 76, "published"),
     ("冬装预售", ["冬", "预售", "羽绒服"], "羽绒服/大衣预售减 100。", 14, 34, "published"),
     # 草稿（未发布，不应被召回）
-    ("测试活动-勿发布", ["测试"], "仅用于演示发布状态过滤。", -5, 30, "draft"),
+    ("测试活动-勿发布", ["测试"], "仅用于验证发布状态过滤。", -5, 30, "draft"),
     ("待审核活动", ["待审核"], "尚未走完审核流程。", -1, 20, "draft"),
 ]
 
@@ -263,7 +263,7 @@ def build_rules():
             "publish_status": status, "source": "运营平台",
         })
         rid += 1
-    # 秋季通勤焕新季 v1（同族旧版本，已过期）——演示版本治理
+    # 秋季通勤焕新季 v1（同族旧版本，已过期）——用于验证版本治理
     rules.append({
         "id": rid, "type": "activity", "title": "秋季通勤焕新季",
         "content": "通勤风格商品 95 折（旧版，已被 v2 替代）。",
@@ -273,7 +273,7 @@ def build_rules():
         "publish_status": "published", "source": "运营平台",
     })
     rid += 1
-    # 新版 v2 草稿，待发布演示
+    # 新版 v2 草稿，用于验证发布流程
     rules.append({
         "id": rid, "type": "activity", "title": "秋季通勤焕新季 v3",
         "content": "通勤风格商品 85 折 + 满 300 减 60（v3 待发布）。",
@@ -373,14 +373,14 @@ def seed_mysql(products, rules):
             for t in ["wardrobe_item", "product", "rule", "orders", "order_item", "favorite", "after_sale"]:
                 cur.execute(f"ALTER TABLE {t} AUTO_INCREMENT = 1")
             cur.execute(
-                "INSERT INTO `user` (id, username, password, nickname) VALUES (1, 'demo', 'demo123', '小潮')")
+                "INSERT INTO `user` (id, username, password, nickname) VALUES (1, 'user', 'user123', '用户')")
 
             # 衣橱
             for i, (name, cat, color, season, style, tags) in enumerate(WARDROBE, 1):
                 img = make_svg(name[:4], color, CATEGORY_ICON[cat], f"wardrobe_{i}.svg")
                 cur.execute(
                     "INSERT INTO wardrobe_item (user_id, name, image_url, category, color, season, style, tags, note, source) "
-                    "VALUES (1, %s, %s, %s, %s, %s, %s, %s, 'seed 演示单品', 'upload')",
+                    "VALUES (1, %s, %s, %s, %s, %s, %s, %s, 'seed 示例单品', 'upload')",
                     (name, img, cat, color, season, style, json.dumps(tags, ensure_ascii=False)))
 
             # 商品
@@ -403,7 +403,7 @@ def seed_mysql(products, rules):
                      json.dumps(r["tags"], ensure_ascii=False), r["version"],
                      r["effective_from"], r["effective_to"], r["publish_status"], r["source"]))
 
-            # 收藏与订单（演示闭环）
+            # 收藏与订单基础数据
             for pid in [product_ids[0], product_ids[6], product_ids[10]]:
                 cur.execute("INSERT INTO favorite (user_id, product_id) VALUES (1, %s)", (pid,))
             cur.execute(
@@ -492,7 +492,7 @@ def seed_es(products, product_ids, rules, embedder):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="初始化潮引演示数据；默认执行显式重置。")
+    parser = argparse.ArgumentParser(description="初始化本地数据；默认执行显式重置。")
     parser.add_argument(
         "--if-empty", action="store_true",
         help="仅在商品/规则表为空时初始化；一键启动必须使用该选项以保护订单和聊天记录",
@@ -506,4 +506,4 @@ if __name__ == "__main__":
     product_ids = seed_mysql(products, rules)
     embedder = make_embedder()
     seed_es(products, product_ids, rules, embedder)
-    print("[seed] all done. 演示账号 demo / demo123")
+    print("[seed] all done. 初始账号 user / user123")

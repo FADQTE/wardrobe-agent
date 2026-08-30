@@ -26,7 +26,7 @@ public class AuthService {
     private final UserAuthTokenMapper tokenMapper;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
-    @Value("${chaoyin.auth.token-hours:168}")
+    @Value("${app.auth.token-hours:168}")
     private long tokenHours = 168;
 
     public record LoginResult(String token, User user, LocalDateTime expiresAt) {
@@ -39,7 +39,7 @@ public class AuthService {
         if (user == null || !passwordMatches(password, user.getPassword())) {
             throw new BizException(401, "用户名或密码错误");
         }
-        // 兼容历史 demo 明文数据：首次成功登录后无感升级为 BCrypt。
+        // 兼容历史明文密码：首次成功登录后无感升级为 BCrypt。
         if (!isBcrypt(user.getPassword())) {
             user.setPassword(passwordEncoder.encode(password));
             userMapper.updateById(user);
@@ -94,7 +94,7 @@ public class AuthService {
 
     private LoginResult issueToken(User user) {
         String random = UUID.randomUUID() + ":" + UUID.randomUUID();
-        String rawToken = "cy_" + Base64.getUrlEncoder().withoutPadding()
+        String rawToken = "auth_" + Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(random.getBytes(StandardCharsets.UTF_8));
         LocalDateTime expiresAt = LocalDateTime.now().plusHours(Math.max(1, tokenHours));
         UserAuthToken token = new UserAuthToken();

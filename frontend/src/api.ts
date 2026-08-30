@@ -1,5 +1,5 @@
 // 前端 API 封装：/api → Java 8080，/agent → Python 8000（vite 代理）
-export const AUTH_TOKEN_KEY = 'cy_auth_token'
+export const AUTH_TOKEN_KEY = 'app_auth_token'
 export const getAccessToken = () => localStorage.getItem(AUTH_TOKEN_KEY) || ''
 export const saveAccessToken = (token: string) => localStorage.setItem(AUTH_TOKEN_KEY, token)
 export const clearAccessToken = () => localStorage.removeItem(AUTH_TOKEN_KEY)
@@ -19,7 +19,7 @@ export async function api<T = any>(path: string, options: RequestInit = {}): Pro
     const code = body?.code ?? res.status
     if (code === 401) {
       clearAccessToken()
-      window.dispatchEvent(new Event('cy-auth-expired'))
+      window.dispatchEvent(new Event('app-auth-expired'))
     }
     throw new Error(body?.msg || `HTTP ${res.status}`)
   }
