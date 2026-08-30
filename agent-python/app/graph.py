@@ -32,6 +32,7 @@ TASK_NAMES = {
     "wardrobe": "衣橱查询", "rag": "穿搭规则RAG", "rule_query": "活动规则查询",
     "product": "商城商品检索", "image": "换装生图", "order": "创建订单",
     "favorite": "收藏商品", "clarify": "澄清",
+    "order_query": "订单查询", "logistics": "物流查询", "aftersale": "售后服务",
 }
 
 
@@ -42,6 +43,7 @@ class AgentState(TypedDict, total=False):
     memory_desc: str
     mem: Any
     runtime: dict
+    event_sink: Any
     safety_data: dict
     handoff: str
     intent_data: dict
@@ -111,7 +113,11 @@ async def execute_node(state: AgentState) -> dict:
     """按拓扑层级并行执行任务：无依赖节点并行，依赖节点按拓扑顺序执行。"""
     tasks = state.get("tasks", [])
     memory = state.get("mem")
-    ctx = {"user_id": state.get("user_id", 1), "session_id": state.get("session_id", "")}
+    ctx = {
+        "user_id": state.get("user_id", 1),
+        "session_id": state.get("session_id", ""),
+        "event_sink": state.get("event_sink"),
+    }
     results, events = [], []
     done: set = set()
     pending = list(tasks)
@@ -138,7 +144,9 @@ async def execute_node(state: AgentState) -> dict:
         if not handoff:
             critical = [r for r in results if not r.get("ok")
                         and r.get("error_category") in ("timeout", "unknown")
-                        and r.get("type") in ("wardrobe", "product", "rag", "rule_query", "order")]
+                        and r.get("type") in (
+                            "wardrobe", "product", "rag", "rule_query", "order",
+                            "order_query", "logistics", "aftersale")]
             if critical:
                 handoff = "业务事实查询失败：" + "、".join(
                     TASK_NAMES.get(r["type"], r["type"]) for r in critical)
@@ -212,6 +220,76 @@ def _compose_activity_list(state: AgentState) -> str | None:
     return "\n".join(lines)
 
 
+ORDER_STATUS_CN = {
+    "pending": "待支付", "paid": "已支付，待发货", "shipped": "已发货",
+    "done": "已完成", "cancelled": "已取消",
+}
+
+
+def _compose_commerce_support(state: AgentState) -> str | None:
+    """订单、物流和售后走确定性回答，避免模型篡改状态或误说“已退款”。"""
+    order_results = _get_results(state, "order_query")
+    if order_results:
+        orders = order_results[0]["data"].get("orders", [])
+        if not orders:
+            return "暂时没有查到你的订单记录。你可以先去商城选择商品并创建订单。"
+        lines = [f"查到 **{len(orders)} 笔订单**（最新在前）：", ""]
+        for order in orders[:5]:
+            status = ORDER_STATUS_CN.get(order.get("status"), order.get("status") or "未知")
+            lines.append(
+                f"- `{order.get('orderNo')}`：¥{order.get('totalAmount')}，{status}"
+                + (f"，物流单号 `{order.get('logisticsNo')}`" if order.get("logisticsNo") else "")
+            )
+        lines.append("\n可继续告诉我订单号查询物流；取消或售后申请请在商城的“我的订单”中确认操作。")
+        return "\n".join(lines)
+
+    logistics_results = _get_results(state, "logistics")
+    if logistics_results:
+        data = logistics_results[0]["data"]
+        if data.get("needsOrderNo"):
+            orders = data.get("orders", [])
+            if not orders:
+                return "没有找到可查询物流的订单。"
+            choices = "、".join(f"`{o.get('orderNo')}`" for o in orders[:3])
+            return f"你有多笔订单，请告诉我要查哪一笔：{choices}。"
+        status = ORDER_STATUS_CN.get(data.get("status"), data.get("status") or "未知")
+        logistics_no = data.get("logisticsNo") or "暂未生成"
+        return (f"订单 `{data.get('orderNo')}` 当前为 **{status}**。\n\n"
+                f"物流单号：`{logistics_no}`。{data.get('hint') or ''}")
+
+    aftersale_results = _get_results(state, "aftersale")
+    if aftersale_results:
+        data = aftersale_results[0]["data"]
+        if data.get("action") == "query":
+            records = data.get("records", [])
+            if not records:
+                return "目前没有查到你的售后申请。若需要退换货，请到商城 → 我的订单 → 查看详情后提交申请。"
+            status_cn = {"pending": "待审核", "approved": "已通过", "rejected": "已拒绝", "completed": "已完成"}
+            lines = [f"查到 **{len(records)} 条售后记录**（最新在前）：", ""]
+            for row in records[:5]:
+                lines.append(
+                    f"- `{row.get('requestNo')}`：订单 #{row.get('orderId')}，"
+                    f"{status_cn.get(row.get('status'), row.get('status'))}，金额 ¥{row.get('amount')}"
+                )
+            return "\n".join(lines)
+
+        policy = data.get("policy") or {}
+        lines = [
+            "支持退换货，但要根据订单状态处理：", "",
+            f"- {policy.get('unpaidOrder', '待支付订单可取消。')}",
+            f"- {policy.get('paidUnshipped', '已支付未发货订单可申请退款。')}",
+            f"- {policy.get('shippedOrCompleted', '已发货订单需按退货退款流程处理。')}",
+            f"- 例外：{policy.get('exclusions', '影响二次销售的商品不适用无理由退换。')}", "",
+            f"> {policy.get('processing', '提交后进入人工审核。')}",
+        ]
+        if data.get("action") == "guide":
+            lines.extend(["", "请到 **商城 → 我的订单 → 查看详情 → 申请退款** 提交；我不会在对话里直接替你执行资金相关操作。"])
+        else:
+            lines.extend(["", "这只是政策查询，**当前没有创建退款申请**。需要办理时可在商城的“我的订单”里提交。"])
+        return "\n".join(lines)
+    return None
+
+
 def _compose_mock(state: AgentState) -> str:
     parts = []
     ward = _get_results(state, "wardrobe")
@@ -241,6 +319,9 @@ def _compose_mock(state: AgentState) -> str:
         ids = f.get("data", {}).get("ids", [])
         if ids:
             parts.append(f"已收藏 {len(ids)} 件商品。")
+    support = _compose_commerce_support(state)
+    if support:
+        parts.append(support)
     if not parts:
         parts.append("已完成。")
     return "\n".join(parts)
@@ -271,6 +352,8 @@ def _compose_llm(state: AgentState) -> str:
             results.append({"type": "image", "label": r["data"].get("label")})
         elif r.get("type") == "favorite" and r.get("ok"):
             results.append({"type": "favorite", "count": len(r["data"].get("ids", []))})
+        elif r.get("type") in ("order_query", "logistics", "aftersale") and r.get("ok"):
+            results.append({"type": r.get("type"), "data": r.get("data")})
     context = {
         "用户消息": state["message"],
         "会话记忆": state["memory_desc"],
@@ -303,7 +386,9 @@ async def assemble_node(state: AgentState) -> dict:
         events.append({"type": "status", "data": {
             "text": "等待用户补充信息（澄清最多 2 轮后兜底引导）", "stage": "clarify"}})
     else:
-        text = _compose_activity_list(state)
+        text = _compose_commerce_support(state)
+        if text is None:
+            text = _compose_activity_list(state)
         if text is None:
             text = _compose_mock(state) if (config.MOCK_AGENT or not config.LLM_API_KEY) else _compose_llm(state)
         outfit = build_outfit(state)

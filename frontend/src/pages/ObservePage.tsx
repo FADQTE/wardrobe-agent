@@ -175,6 +175,23 @@ export default function ObservePage() {
           <Col span={5}><Statistic title="Reranker" value={health?.rerank?.enabled ? (health.rerank.state === 'ready' ? '已就绪' : health.rerank.state ?? '待加载') : '关闭'} valueStyle={{ fontSize: 13, color: health?.rerank?.enabled && health?.rerank?.state === 'ready' ? '#3f8600' : '#999' }} /></Col>
           <Col span={4}><Statistic title="ES" value={health?.es ? '已连接' : '不可用'} valueStyle={{ fontSize: 15, color: health?.es ? '#3f8600' : '#cf1322' }} /></Col>
         </Row>
+        <Space wrap style={{ marginTop: 10 }}>
+          <Tag color={health?.indices?.product_index?.exists ? 'green' : 'red'}>
+            product_index：{health?.indices?.product_index?.documents ?? 0} 文档 / {health?.indices?.product_index?.vectorDocuments ?? 0} 向量
+          </Tag>
+          <Tag color={health?.indices?.rule_index?.exists ? 'green' : 'red'}>
+            rule_index：{health?.indices?.rule_index?.documents ?? 0} 文档 / {health?.indices?.rule_index?.vectorDocuments ?? 0} 向量
+          </Tag>
+          <Tag color="blue">
+            Hybrid：{health?.hybridRag?.fusion === 'weighted_rrf' ? 'BM25 + kNN → 加权 RRF' : '未知'}
+          </Tag>
+          <Tag color={health?.tryon?.mode === 'http' && health?.tryon?.providerConfigured ? 'green' : 'gold'}>
+            虚拟试衣：{health?.tryon?.mode === 'http'
+              ? (health?.tryon?.providerConfigured ? 'HTTP 生图服务' : 'HTTP 模式但未配 TRYON_PROVIDER_URL')
+              : 'mock 本地预设图'}
+          </Tag>
+          <Tag>向量维度：{health?.indices?.product_index?.vectorDims ?? '-'}</Tag>
+        </Space>
         <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
           接入真实模型：编辑 agent-python/.env → LLM_BASE_URL / LLM_API_KEY / LLM_MODEL（OpenAI 兼容：DeepSeek/通义/Kimi/Ollama），
           MOCK_AGENT 改 false → 重启 Agent。本地向量检索：EMBEDDING_MODE=ollama + docker compose --profile ollama up -d +

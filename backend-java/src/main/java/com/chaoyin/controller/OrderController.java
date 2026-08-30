@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -16,6 +17,7 @@ import java.util.Map;
 public class OrderController {
 
     private final OrderService orderService;
+    private final com.chaoyin.service.AfterSaleService afterSaleService;
 
     public record CreateOrderRequest(Long userId, List<OrderService.ItemReq> items,
                                      String receiverName, String receiverPhone, String receiverAddress) {
@@ -33,15 +35,18 @@ public class OrderController {
     }
 
     @GetMapping("/{id}")
-    public ApiResponse<Map<String, Object>> detail(@PathVariable Long id) {
-        return ApiResponse.ok(Map.of(
-                "order", orderService.detail(id),
-                "items", orderService.items(id)
-        ));
+    public ApiResponse<Map<String, Object>> detail(@PathVariable Long id, @RequestParam Long userId) {
+        MallOrder order = orderService.detailForUser(id, userId);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("order", order);
+        data.put("items", orderService.items(id));
+        data.put("afterSale", afterSaleService.findByOrder(id, userId));
+        return ApiResponse.ok(data);
     }
 
     @PostMapping("/{id}/pay")
-    public ApiResponse<Void> pay(@PathVariable Long id) {
+    public ApiResponse<Void> pay(@PathVariable Long id, @RequestParam Long userId) {
+        orderService.detailForUser(id, userId);
         orderService.pay(id);
         return ApiResponse.ok(null);
     }
@@ -52,8 +57,8 @@ public class OrderController {
     }
 
     @PostMapping("/{id}/cancel")
-    public ApiResponse<Void> cancel(@PathVariable Long id) {
-        orderService.cancel(id);
+    public ApiResponse<Void> cancel(@PathVariable Long id, @RequestParam Long userId) {
+        orderService.cancelForUser(id, userId);
         return ApiResponse.ok(null);
     }
 }

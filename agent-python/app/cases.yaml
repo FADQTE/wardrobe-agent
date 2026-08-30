@@ -40,3 +40,17 @@ cases:
     must_events: [plan, status]
     forbid_tools: [createOrder]
     expect_clarify: true
+  - id: c07_order_query
+    name: 我的订单走实时订单工具
+    message: 帮我查一下我的订单
+    must_events: [plan, tool]
+    must_tools: [listOrders]
+    forbid_tools: [hybrid_rule_search, createOrder]
+    forbid_text: [当前不支持查询订单记录]
+  - id: c08_aftersale_policy
+    name: 退款咨询走售后政策而不是活动规则
+    message: 退款支持吗？
+    must_events: [plan, tool]
+    must_tools: [getAfterSalePolicy]
+    forbid_tools: [hybrid_rule_search, createOrder]
+    forbid_text: [正在生效的活动, 已退款成功, 已到账]

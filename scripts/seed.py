@@ -321,10 +321,43 @@ def make_embedder():
 
 
 # ---------- 主流程 ----------
+def has_existing_business_data() -> bool:
+    """启动脚本使用：核心业务表已有数据时禁止自动重置聊天、订单和用户数据。"""
+    try:
+        conn = pymysql.connect(**MYSQL)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT (SELECT COUNT(*) FROM product), (SELECT COUNT(*) FROM rule)")
+                product_count, rule_count = cur.fetchone()
+                return int(product_count or 0) > 0 and int(rule_count or 0) > 0
+        finally:
+            conn.close()
+    except Exception as error:
+        print(f"[seed] 检查现有数据失败，将按首次初始化处理: {error}")
+        return False
+
+
 def seed_mysql(products, rules):
     conn = pymysql.connect(**MYSQL)
     try:
         with conn.cursor() as cur:
+            # 兼容已经创建过数据卷的开发环境：docker-entrypoint-initdb 只在首次启动执行。
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS after_sale (
+                  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                  request_no VARCHAR(32) NOT NULL UNIQUE,
+                  order_id BIGINT NOT NULL,
+                  user_id BIGINT NOT NULL,
+                  type VARCHAR(24) NOT NULL,
+                  status VARCHAR(16) NOT NULL DEFAULT 'pending',
+                  reason VARCHAR(255),
+                  amount DECIMAL(10,2) NOT NULL,
+                  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                  INDEX idx_user (user_id), INDEX idx_order (order_id)
+                ) ENGINE=InnoDB
+            """)
+            cur.execute("DELETE FROM after_sale")
             cur.execute("DELETE FROM order_item")
             cur.execute("DELETE FROM orders")
             cur.execute("DELETE FROM favorite")
@@ -336,7 +369,7 @@ def seed_mysql(products, rules):
             cur.execute("DELETE FROM tryon_task")
             cur.execute("DELETE FROM `user`")
             # 重置自增，保证 DB id 与 ES _id 一致（1..N）
-            for t in ["wardrobe_item", "product", "rule", "orders", "order_item", "favorite"]:
+            for t in ["wardrobe_item", "product", "rule", "orders", "order_item", "favorite", "after_sale"]:
                 cur.execute(f"ALTER TABLE {t} AUTO_INCREMENT = 1")
             cur.execute(
                 "INSERT INTO `user` (id, username, password, nickname) VALUES (1, 'demo', 'demo123', '小潮')")
@@ -456,6 +489,17 @@ def seed_es(products, product_ids, rules, embedder):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="初始化潮引演示数据；默认执行显式重置。")
+    parser.add_argument(
+        "--if-empty", action="store_true",
+        help="仅在商品/规则表为空时初始化；一键启动必须使用该选项以保护订单和聊天记录",
+    )
+    args = parser.parse_args()
+    if args.if_empty and has_existing_business_data():
+        print("[seed] 已存在商品和规则数据，跳过重置；聊天、订单和会话记忆均保留。")
+        raise SystemExit(0)
     products = gen_products(200)
     rules = build_rules()
     product_ids = seed_mysql(products, rules)

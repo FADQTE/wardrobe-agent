@@ -108,8 +108,16 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<Object> {
                                 "{\"type\":\"error\",\"data\":{\"text\":\"消息不能为空\"}}"));
                         return;
                     }
-                    log.info("WS chat relay: session={} userId={} msg={}", sid, uid, message);
-                    relay.send(sid, uid, message);
+                    // 帧内身份不得覆盖握手身份，否则可把事件投递到别人的会话或冒用 userId。
+                    if (!sessionId.equals(sid) || !userId.equals(uid)) {
+                        ctx.channel().writeAndFlush(new TextWebSocketFrame(
+                                "{\"type\":\"error\",\"data\":{\"text\":\"会话身份与握手不一致\"}}"));
+                        log.warn("WS identity mismatch: handshake session={} userId={}, frame session={} userId={}",
+                                sessionId, userId, sid, uid);
+                        return;
+                    }
+                    log.info("WS chat relay: session={} userId={} msg={}", sessionId, userId, message);
+                    relay.send(sessionId, userId, message);
                 }
                 default -> log.warn("WS unknown frame type: {}", type);
             }

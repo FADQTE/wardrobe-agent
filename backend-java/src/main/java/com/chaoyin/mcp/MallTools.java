@@ -7,6 +7,7 @@ import com.chaoyin.mapper.FavoriteMapper;
 import com.chaoyin.service.OrderService;
 import com.chaoyin.service.ProductService;
 import com.chaoyin.service.WardrobeService;
+import com.chaoyin.service.AfterSaleService;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.chaoyin.entity.Favorite;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class MallTools {
     private final WardrobeService wardrobeService;
     private final ProductService productService;
     private final OrderService orderService;
+    private final AfterSaleService afterSaleService;
     private final FavoriteMapper favoriteMapper;
 
     public record ProductPage(List<Product> products, long total) {
@@ -92,14 +94,21 @@ public class MallTools {
         return orderService.create(userId, items, receiverName, receiverPhone, receiverAddress);
     }
 
-    @Tool(description = "按订单号查询订单状态")
-    public MallOrder queryOrder(@ToolParam(description = "订单号") String orderNo) {
-        return orderService.findByNo(orderNo);
+    @Tool(description = "查询指定用户的订单列表，按最新订单优先返回")
+    public List<MallOrder> listOrders(@ToolParam(description = "用户ID") long userId) {
+        return orderService.listByUser(userId);
+    }
+
+    @Tool(description = "按订单号查询当前用户的订单状态")
+    public MallOrder queryOrder(@ToolParam(description = "用户ID") long userId,
+                                @ToolParam(description = "订单号") String orderNo) {
+        return orderService.findByNoForUser(orderNo, userId);
     }
 
     @Tool(description = "按订单号查询物流信息")
-    public LogisticsInfo queryLogistics(@ToolParam(description = "订单号") String orderNo) {
-        MallOrder order = orderService.findByNo(orderNo);
+    public LogisticsInfo queryLogistics(@ToolParam(description = "用户ID") long userId,
+                                        @ToolParam(description = "订单号") String orderNo) {
+        MallOrder order = orderService.findByNoForUser(orderNo, userId);
         String hint = switch (order.getStatus()) {
             case OrderService.PENDING -> "订单待支付，尚未发货";
             case OrderService.PAID -> "已支付，等待发货";
@@ -108,5 +117,16 @@ public class MallTools {
             default -> "订单状态: " + order.getStatus();
         };
         return new LogisticsInfo(order.getOrderNo(), order.getStatus(), order.getLogisticsNo(), hint);
+    }
+
+    @Tool(description = "查询商城退货退款政策。只返回政策与处理边界，不代表退款申请已通过")
+    public AfterSaleService.Policy getAfterSalePolicy() {
+        return afterSaleService.policy();
+    }
+
+    @Tool(description = "查询指定用户的售后申请记录，按最新申请优先返回")
+    public List<com.chaoyin.entity.AfterSale> listAfterSales(
+            @ToolParam(description = "用户ID") long userId) {
+        return afterSaleService.listByUser(userId);
     }
 }

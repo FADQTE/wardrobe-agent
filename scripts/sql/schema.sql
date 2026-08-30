@@ -88,6 +88,21 @@ CREATE TABLE IF NOT EXISTS order_item (
   INDEX idx_order (order_id)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS after_sale (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  request_no VARCHAR(32) NOT NULL UNIQUE,
+  order_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  type VARCHAR(24) NOT NULL COMMENT 'refund|return_refund|exchange',
+  status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT 'pending|approved|rejected|completed',
+  reason VARCHAR(255),
+  amount DECIMAL(10,2) NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_user (user_id),
+  INDEX idx_order (order_id)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS favorite (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id BIGINT NOT NULL,

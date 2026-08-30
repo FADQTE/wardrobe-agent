@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Hybrid RAG：ES 双索引（商品/规则），BM25 + 向量 kNN(script_score) + 标签过滤 + 时间窗过滤。"""
+"""Hybrid RAG：ES 商品/规则双索引，BM25 与 kNN 独立召回后做加权 RRF 融合。
+
+检索边界：
+- 商品：status + 类目/颜色/季节/风格/价格过滤；
+- 规则：published + 类型/标签 + 生效时间窗过滤；
+- 向量不可用、维度不匹配或 kNN 异常时自动降级 BM25；
+- `_source` 永远排除 embedding，避免把 1024 维向量传给 Agent/前端。
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -10,41 +17,133 @@ from .es_client import get_es
 
 CATEGORY_CN = {"top": "上装", "bottom": "下装", "outerwear": "外套",
                "dress": "连衣裙", "shoes": "鞋履", "accessory": "配饰"}
+SEASON_ALIAS = {"春季": "春", "夏季": "夏", "秋季": "秋", "冬季": "冬"}
+SOURCE_FILTER = {"excludes": ["embedding"]}
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-SEASON_ALIAS = {"春季": "春", "夏季": "夏", "秋季": "秋", "冬季": "冬"}
-
-
 def normalize_tags(tags: Optional[list[str]]) -> list[str]:
-    """标签归一化：LLM 可能输出"秋季/春季"等全称，映射到知识库枚举（秋/春…）。"""
-    out = []
-    for t in tags or []:
-        out.append(SEASON_ALIAS.get(t, t))
-    return [t for t in dict.fromkeys(out) if t]
+    """标签归一化：把“秋季”等自然语言标签映射到索引枚举“秋”。"""
+    out = [SEASON_ALIAS.get(tag, tag) for tag in tags or []]
+    return [tag for tag in dict.fromkeys(out) if tag]
 
 
-def _tag_filters(tags: Optional[list[str]], prefix: str = "") -> list:
-    if not tags:
-        return []
-    return [{"term": {f"{prefix}tags": t}} for t in tags]
+def _tag_filters(tags: Optional[list[str]]) -> list[dict]:
+    return [{"term": {"tags": tag}} for tag in tags or []]
+
+
+def _filtered_query(filters: list[dict], must: list[dict] | None = None) -> dict:
+    return {"bool": {"must": must or [], "filter": filters}}
+
+
+def _lexical_search(index: str, must: list[dict], filters: list[dict], size: int,
+                    *, offset: int = 0, sort: list[dict] | None = None) -> dict:
+    body: dict = {
+        "query": _filtered_query(filters, must),
+        "from": offset,
+        "size": size,
+        "track_total_hits": True,
+        "_source": SOURCE_FILTER,
+    }
+    if sort:
+        body["sort"] = sort
+    return get_es().es.search(index=index, body=body)
+
+
+def _vector_search(index: str, query: str, filters: list[dict], size: int) -> tuple[list[dict], str]:
+    """独立 kNN 召回；返回 (hits, 状态)，任何故障都安全降级，不污染 BM25。"""
+    es = get_es()
+    if not es.index_has_vector(index):
+        return [], "index_without_vector"
+    vectors = es.embed([query])
+    if not vectors or not vectors[0]:
+        return [], "embedding_unavailable"
+    expected_dims = es.vector_dims(index)
+    if expected_dims and len(vectors[0]) != expected_dims:
+        print(f"[hybrid] vector dims mismatch index={index} expected={expected_dims} "
+              f"actual={len(vectors[0])}", flush=True)
+        return [], "dimension_mismatch"
+    try:
+        k = max(1, size)
+        knn: dict = {
+            "field": "embedding",
+            "query_vector": vectors[0],
+            "k": k,
+            "num_candidates": min(10_000, max(100, k * 4)),
+        }
+        if filters:
+            knn["filter"] = {"bool": {"filter": filters}}
+        response = es.es.search(index=index, body={
+            "knn": knn,
+            "size": k,
+            "_source": SOURCE_FILTER,
+        })
+        return list(response["hits"]["hits"]), "ok"
+    except Exception as error:
+        print(f"[hybrid] kNN failed index={index}: {error}", flush=True)
+        return [], "knn_error"
+
+
+def _rrf_fuse(lexical_hits: list[dict], vector_hits: list[dict],
+              *, offset: int = 0, size: int = 10) -> list[dict]:
+    """加权 Reciprocal Rank Fusion；分数只依赖各通道排名，不混用 BM25/cosine 量纲。"""
+    fused: dict[str, dict] = {}
+    channels = (
+        ("bm25", lexical_hits, config.HYBRID_LEXICAL_WEIGHT),
+        ("knn", vector_hits, config.HYBRID_VECTOR_WEIGHT),
+    )
+    for channel, hits, weight in channels:
+        for rank, hit in enumerate(hits, 1):
+            doc_id = str(hit["_id"])
+            entry = fused.setdefault(doc_id, {
+                "hit": hit,
+                "rrfScore": 0.0,
+                "retrievalChannels": [],
+                "channelRanks": {},
+                "lexicalScore": None,
+                "vectorScore": None,
+            })
+            entry["rrfScore"] += weight / (config.HYBRID_RRF_K + rank)
+            entry["retrievalChannels"].append(channel)
+            entry["channelRanks"][channel] = rank
+            entry["lexicalScore" if channel == "bm25" else "vectorScore"] = hit.get("_score")
+            if channel == "bm25":
+                entry["hit"] = hit
+    ranked = sorted(
+        fused.values(),
+        key=lambda item: (item["rrfScore"], item["lexicalScore"] or 0,
+                          item["vectorScore"] or 0),
+        reverse=True,
+    )
+    for entry in ranked:
+        entry["rrfScore"] = round(entry["rrfScore"], 8)
+    return ranked[offset:offset + size]
+
+
+def _entry_source(entry: dict) -> dict:
+    source = dict(entry["hit"].get("_source") or {})
+    source.pop("embedding", None)
+    return source
+
+
+def _retrieval_mode(lexical_hits: list, vector_hits: list) -> str:
+    if lexical_hits and vector_hits:
+        return "hybrid_rrf"
+    if vector_hits:
+        return "knn"
+    return "bm25"
 
 
 def hybrid_product_search(keyword: str = "", category: str = "", color: str = "",
                           season: str = "", style: str = "", max_price: float | None = None,
                           page: int = 1, size: int = 24, min_score: float | None = None) -> dict:
-    """商城商品混合检索：BM25 + 标签过滤 +（可选）向量相似度。"""
-    es = get_es()
-    must, filters = [], []
-    if keyword:
-        must.append({"multi_match": {
-            "query": keyword,
-            "fields": ["name^3", "detail"],
-            "type": "best_fields",
-        }})
+    """商城检索：BM25 与 kNN 双路召回 + 标签过滤 + 加权 RRF。"""
+    page, size = max(1, page), max(1, size)
+    offset = (page - 1) * size
+    filters: list[dict] = [{"term": {"status": 1}}]
     if category:
         filters.append({"term": {"category": category}})
     if color:
@@ -56,43 +155,79 @@ def hybrid_product_search(keyword: str = "", category: str = "", color: str = ""
         filters.append({"term": {"style": style}})
     if max_price is not None:
         filters.append({"range": {"price": {"lte": max_price}}})
-    filters.append({"term": {"status": 1}})
 
-    body = {"query": {"bool": {"must": must, "filter": filters}},
-            "from": (page - 1) * size, "size": size}
-    if not must:
-        body["sort"] = [{"sales": {"order": "desc"}}]
+    if not keyword:
+        response = _lexical_search(
+            config.PRODUCT_INDEX, [], filters, size, offset=offset,
+            sort=[{"sales": {"order": "desc"}}, {"_id": {"order": "desc"}}],
+        )
+        hits = list(response["hits"]["hits"])
+        products = []
+        for rank, hit in enumerate(hits, offset + 1):
+            source = dict(hit.get("_source") or {})
+            source.pop("embedding", None)
+            products.append(source | {
+                "id": int(hit["_id"]), "score": hit.get("_score"),
+                "imageUrl": source.get("image_url"),
+                "retrievalMode": "catalog_filter", "retrievalChannels": ["filter"],
+                "channelRanks": {"filter": rank},
+            })
+        return {
+            "products": products,
+            "total": int(response["hits"]["total"]["value"]),
+            "retrieval": {"mode": "catalog_filter", "lexicalHits": len(hits),
+                          "vectorHits": 0, "vectorState": "not_requested"},
+        }
 
-    # 向量召回（若索引带向量且关键词非空）
-    if keyword and es.has_vector:
-        vec = es.embed([keyword])
-        if vec:
-            body["query"]["bool"]["should"] = [{
-                "script_score": {
-                    "query": {"match_all": {}},
-                    "script": {
-                        "source": "cosineSimilarity(params.q, 'embedding') + 1.0",
-                        "params": {"q": vec[0]},
-                    },
-                },
-            }]
-            body["query"]["bool"]["minimum_should_match"] = 1
+    window = max(config.HYBRID_CANDIDATE_WINDOW, offset + size)
+    must = [{"multi_match": {
+        "query": keyword, "fields": ["name^3", "detail"], "type": "best_fields",
+    }}]
+    lexical = _lexical_search(config.PRODUCT_INDEX, must, filters, window)
+    lexical_hits = list(lexical["hits"]["hits"])
+    vector_hits, vector_state = _vector_search(config.PRODUCT_INDEX, keyword, filters, window)
+    entries = _rrf_fuse(lexical_hits, vector_hits, offset=offset, size=size)
+    mode = _retrieval_mode(lexical_hits, vector_hits)
+    products = []
+    for entry in entries:
+        source = _entry_source(entry)
+        product = source | {
+            "id": int(entry["hit"]["_id"]),
+            "score": entry["rrfScore"] if mode == "hybrid_rrf" else
+                     (entry["lexicalScore"] or entry["vectorScore"]),
+            "rrfScore": entry["rrfScore"],
+            "lexicalScore": entry["lexicalScore"], "vectorScore": entry["vectorScore"],
+            "retrievalMode": mode, "retrievalChannels": entry["retrievalChannels"],
+            "channelRanks": entry["channelRanks"], "imageUrl": source.get("image_url"),
+        }
+        if min_score is None or max(product.get("lexicalScore") or 0,
+                                    product.get("vectorScore") or 0) >= min_score:
+            products.append(product)
 
-    resp = es.es.search(index=config.PRODUCT_INDEX, body=body)
-    products = [h["_source"] | {"id": int(h["_id"]), "score": h["_score"],
-                                "imageUrl": h["_source"].get("image_url")}
-                for h in resp["hits"]["hits"]]
-    # 兜底：颜色/季节/风格过滤过严导致零命中 → 去掉这三个条件重试（保留关键词/类目/价格）
     if not products and (color or season or style):
-        return hybrid_product_search(keyword=keyword, category=category,
-                                     color="", season="", style="",
-                                     max_price=max_price, page=page, size=size)
-    if min_score is not None and keyword:
-        products = [p for p in products if p["score"] >= min_score]
-    return {"products": products, "total": resp["hits"]["total"]["value"]}
+        fallback = hybrid_product_search(
+            keyword=keyword, category=category, color="", season="", style="",
+            max_price=max_price, page=page, size=size, min_score=min_score,
+        )
+        fallback.setdefault("retrieval", {})["relaxedFilters"] = [
+            key for key, value in (("color", color), ("season", season), ("style", style)) if value
+        ]
+        return fallback
+
+    lexical_total = int(lexical["hits"]["total"]["value"])
+    return {
+        "products": products,
+        "total": max(lexical_total, len({str(hit["_id"]) for hit in lexical_hits + vector_hits})),
+        "retrieval": {
+            "mode": mode, "lexicalHits": len(lexical_hits), "vectorHits": len(vector_hits),
+            "vectorState": vector_state, "candidateWindow": window,
+            "rrf": {"rankConstant": config.HYBRID_RRF_K,
+                    "lexicalWeight": config.HYBRID_LEXICAL_WEIGHT,
+                    "vectorWeight": config.HYBRID_VECTOR_WEIGHT},
+        },
+    }
 
 
-# ---------- 检索结果缓存（规则发布时整体失效） ----------
 _cache: dict = {}
 
 
@@ -116,89 +251,93 @@ def _cache_put(key, value):
 def hybrid_rule_search(query: str, tags: Optional[list[str]] = None,
                        rule_type: Optional[str] = None, only_time_valid: bool = True,
                        size: int = 6, fallback_all: bool = False) -> list[dict]:
-    """规则 RAG：关键词 + 标签过滤 + 时间窗过滤（only_time_valid 时过滤过期/未生效/未发布）。
-
-    fallback_all=True 时（活动查询）：关键词零命中则回退返回当前全部有效规则。
-    返回: [{id, title, content, source, version, timeValid, tags, score}]
-    """
-    cache_key = (query, tuple(tags or []), rule_type, only_time_valid, size, fallback_all)
+    """规则 RAG：BM25/kNN 双路召回，发布状态、标签和生效时间窗在两路中一致过滤。"""
+    tags = normalize_tags(tags)
+    cache_key = (query, tuple(tags), rule_type, only_time_valid, size, fallback_all)
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
-    tags = normalize_tags(tags)
-    es = get_es()
-    must = []
-    if query:
-        must.append({"multi_match": {"query": query, "fields": ["title^3", "content"], "type": "best_fields"}})
-    filters = [{"term": {"publish_status": "published"}}]
+    filters: list[dict] = [{"term": {"publish_status": "published"}}]
     if rule_type:
         filters.append({"term": {"type": rule_type}})
     if only_time_valid:
         now = _now_iso()
-        filters.append({"range": {"effective_from": {"lte": now}}})
-        filters.append({"range": {"effective_to": {"gte": now}}})
+        filters.extend([
+            {"range": {"effective_from": {"lte": now}}},
+            {"range": {"effective_to": {"gte": now}}},
+        ])
     filters.extend(_tag_filters(tags))
 
-    body = {"query": {"bool": {"must": must, "filter": filters}}, "size": size}
-    if not must:
-        # 清单查询优先展示即将结束的活动，方便用户先用快到期的优惠。
-        body["sort"] = [{"effective_to": {"order": "asc"}}, {"effective_from": {"order": "desc"}}]
-    if query and es.has_vector:
-        vec = es.embed([query])
-        if vec:
-            body["query"]["bool"]["should"] = [{
-                "script_score": {
-                    "query": {"match_all": {}},
-                    "script": {
-                        "source": "cosineSimilarity(params.q, 'embedding') + 1.0",
-                        "params": {"q": vec[0]},
-                    },
-                },
-            }]
-            body["query"]["bool"]["minimum_should_match"] = 1
+    if query:
+        window = max(config.HYBRID_CANDIDATE_WINDOW, size)
+        must = [{"multi_match": {
+            "query": query, "fields": ["title^3", "content"], "type": "best_fields",
+        }}]
+        lexical = _lexical_search(config.RULE_INDEX, must, filters, window)
+        lexical_hits = list(lexical["hits"]["hits"])
+        vector_hits, vector_state = _vector_search(config.RULE_INDEX, query, filters, window)
+        entries = _rrf_fuse(lexical_hits, vector_hits, size=size)
+        mode = _retrieval_mode(lexical_hits, vector_hits)
+    else:
+        response = _lexical_search(
+            config.RULE_INDEX, [], filters, size,
+            sort=[{"effective_to": {"order": "asc"}}, {"effective_from": {"order": "desc"}}],
+        )
+        lexical_hits = list(response["hits"]["hits"])
+        vector_hits, vector_state, mode = [], "not_requested", "catalog_filter"
+        entries = _rrf_fuse(lexical_hits, [], size=size)
 
-    resp = es.es.search(index=config.RULE_INDEX, body=body)
     rules = []
-    for h in resp["hits"]["hits"]:
-        s = h["_source"]
-        ef, et = s.get("effective_from"), s.get("effective_to")
+    for entry in entries:
+        source = _entry_source(entry)
+        effective_from, effective_to = source.get("effective_from"), source.get("effective_to")
         rules.append({
-            "id": int(h["_id"]), "title": s.get("title"), "content": s.get("content"),
-            "source": s.get("source"), "version": s.get("version"),
-            "tags": s.get("tags", []), "type": s.get("type"),
-            "effectiveFrom": ef, "effectiveTo": et,
-            "timeValid": only_time_valid, "score": h["_score"],
+            "id": int(entry["hit"]["_id"]), "title": source.get("title"),
+            "content": source.get("content"), "source": source.get("source"),
+            "version": source.get("version"), "tags": source.get("tags", []),
+            "type": source.get("type"), "publishStatus": source.get("publish_status"),
+            "effectiveFrom": effective_from, "effectiveTo": effective_to,
+            "timeValid": rule_time_valid(source),
+            "score": entry["rrfScore"] if mode == "hybrid_rrf" else
+                     (entry["lexicalScore"] or entry["vectorScore"]),
+            "rrfScore": entry["rrfScore"], "lexicalScore": entry["lexicalScore"],
+            "vectorScore": entry["vectorScore"], "retrievalMode": mode,
+            "retrievalChannels": entry["retrievalChannels"],
+            "channelRanks": entry["channelRanks"], "vectorState": vector_state,
         })
-    # 兜底1：标签过滤导致零命中 → 去掉标签重试（LLM 标签粒度可能过细）
+
     if not rules and tags:
-        rules = hybrid_rule_search(query, tags=None, rule_type=rule_type,
-                                   only_time_valid=only_time_valid, size=size)
-    # 兜底2：关键词零命中时回退返回当前全部有效规则（活动查询场景）
+        rules = hybrid_rule_search(
+            query, tags=None, rule_type=rule_type, only_time_valid=only_time_valid,
+            size=size, fallback_all=fallback_all,
+        )
     if fallback_all and not rules and query:
-        rules = hybrid_rule_search("", tags=tags, rule_type=rule_type,
-                                   only_time_valid=only_time_valid, size=size)
+        rules = hybrid_rule_search(
+            "", tags=tags, rule_type=rule_type,
+            only_time_valid=only_time_valid, size=size, fallback_all=False,
+        )
     _cache_put(cache_key, rules)
     return rules
 
 
 def rule_time_valid(source: dict) -> bool:
-    """按当前时间窗校验单条规则（查询前过滤）。"""
+    """按当前时间窗校验单条规则，作为 ES filter 之外的展示证据。"""
     if source.get("publish_status") != "published":
         return False
     now = datetime.now(timezone.utc)
-    ef = source.get("effective_from")
-    et = source.get("effective_to")
-    if ef:
-        t = datetime.fromisoformat(ef.replace("Z", "+00:00"))
-        if t.tzinfo is None:
-            t = t.replace(tzinfo=timezone.utc)
-        if now < t:
+    effective_from = source.get("effective_from")
+    effective_to = source.get("effective_to")
+    if effective_from:
+        value = datetime.fromisoformat(effective_from.replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        if now < value:
             return False
-    if et:
-        t = datetime.fromisoformat(et.replace("Z", "+00:00"))
-        if t.tzinfo is None:
-            t = t.replace(tzinfo=timezone.utc)
-        if now > t:
+    if effective_to:
+        value = datetime.fromisoformat(effective_to.replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        if now > value:
             return False
     return True

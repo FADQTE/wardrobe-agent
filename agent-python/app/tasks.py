@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""任务执行器：衣橱查询 / 规则RAG / 商品检索 / mock 生图 / 订单 / 收藏。"""
+"""任务执行器：衣橱查询 / 规则RAG / 商品检索 / 虚拟试衣 / 订单 / 收藏。"""
 from __future__ import annotations
 
 import asyncio
@@ -114,12 +114,19 @@ async def do_rag(task, state, memory, rule_type=None) -> dict:
                 top_k=6)
             events.append(_tool_event("rerank", {"query": search_query, "topK": len(rules)}, True,
                                       f"Reranker 重排 Top{len(rules)}（Qwen3-Reranker 本地部署）"))
-        events.append({"type": "rag", "data": {"rules": rules, "query": query}})
+        retrieval_mode = rules[0].get("retrievalMode") if rules else (
+            "catalog_filter" if broad_activity else "bm25")
+        events.append({"type": "rag", "data": {
+            "rules": rules, "query": query,
+            "retrieval": {"mode": retrieval_mode,
+                          "channels": rules[0].get("retrievalChannels", []) if rules else []},
+        }})
         events.append(_tool_event("hybrid_rule_search", {
             "query": query, "tags": tags, "type": rule_type,
             "mode": "all_current" if broad_activity else "relevant",
         },
-                                  True, f"召回 {len(rules)} 条有效规则（已过滤过期/未生效/未发布）"))
+                                  True, f"召回 {len(rules)} 条有效规则（{retrieval_mode}；"
+                                        "已过滤过期/未生效/未发布）"))
         return {"task_id": task["id"], "type": stage, "ok": True, "data": {"rules": rules}, "events": events}
     except Exception as e:
         err_cat = classify_error(e)
@@ -149,11 +156,16 @@ async def do_product(task, state, memory) -> dict:
                 top_k=6)
             events.append(_tool_event("rerank", {"keyword": keyword, "topK": len(products)}, True,
                                       f"Reranker 重排 Top{len(products)}"))
+        retrieval = result.get("retrieval") or {}
         events.append(_tool_event("hybrid_product_search", params, True,
-                                  f"商城命中 {result['total']} 件，展示 Top{len(products)}"))
+                                  f"商城命中 {result['total']} 件，展示 Top{len(products)}"
+                                  f"（{retrieval.get('mode', 'bm25')}："
+                                  f"BM25 {retrieval.get('lexicalHits', 0)} / "
+                                  f"kNN {retrieval.get('vectorHits', 0)}）"))
         if products:
             events.append({"type": "product", "data": {
-                "title": "商城在售候选（可点击查看详情/购买）", "products": products[:6]}})
+                "title": "商城在售候选（可点击查看详情/购买）", "products": products[:6],
+                "retrieval": retrieval}})
         return {"task_id": task["id"], "type": "product", "ok": True,
                 "data": {"products": products}, "events": events}
     except Exception as e:
@@ -165,43 +177,100 @@ async def do_product(task, state, memory) -> dict:
 
 
 async def do_image(task, state, memory, ctx) -> dict:
-    label = task.get("params", {}).get("label") or "换装效果"
+    params = task.get("params", {})
+    label = params.get("label") or "换装效果"
     events = [_status_event("创建换装任务（统一管理输入/状态/结果地址）…", "image")]
     task_id = None
     try:
         async with httpx.AsyncClient(timeout=10) as c:
             r = await c.post(f"{config.JAVA_API_URL}/tryon", json={
                 "sessionId": ctx["session_id"], "userId": ctx["user_id"],
-                "garmentIds": json.dumps([]),
-                "params": json.dumps({"label": label}, ensure_ascii=False),
+                "garmentIds": json.dumps(params.get("garmentIds") or []),
+                "params": json.dumps(params | {"label": label}, ensure_ascii=False),
                 "status": "processing",
             })
             if r.status_code == 200:
                 task_id = r.json().get("data", {}).get("id")
     except Exception as e:
-        events.append(_tool_event("mock_tryon:create", task, False, f"任务创建失败: {e}"))
+        events.append(_tool_event("tryon_task:create", task, False, f"任务创建失败: {e}"))
 
-    for stage, percent in [("上传人像与衣物图", 20), ("解析穿搭要求", 45), ("模型生成中", 75), ("渲染完成", 100)]:
-        events.append({"type": "image_progress", "data": {"stage": stage, "percent": percent, "taskId": task_id}})
-        await asyncio.sleep(0.5)
-
-    # 从预设结果池挑选（按 label 稳定哈希）
-    idx = int(hashlib.md5(label.encode()).hexdigest(), 16) % len(TRYON_PRESETS)
-    fname, preset_label = TRYON_PRESETS[idx]
-    url = f"/seed-images/{fname}"
-    if task_id:
+    async def update_task(status: str, result_url: str | None = None,
+                          error_msg: str | None = None) -> None:
+        if not task_id:
+            return
         try:
             async with httpx.AsyncClient(timeout=10) as c:
-                await c.post(f"{config.JAVA_API_URL}/tryon/{task_id}/status",
-                             json={"status": "done", "resultUrl": url, "errorMsg": None})
-        except Exception:
-            pass
-    memory.state["last_image"] = {"url": url, "label": preset_label, "taskId": task_id}
-    events.append({"type": "image", "data": {"url": url, "label": preset_label, "taskId": task_id}})
-    events.append(_tool_event("mock_tryon", {"label": label}, True,
-                              f"任务 #{task_id} 完成，结果地址 {url}（mock provider，可无缝替换真实生图 API）"))
+                await c.post(f"{config.JAVA_API_URL}/tryon/{task_id}/status", json={
+                    "status": status, "resultUrl": result_url, "errorMsg": error_msg,
+                })
+        except Exception as error:
+            print(f"[tryon] task status update failed: {error}", flush=True)
+
+    async def progress(stage: str, percent: int) -> None:
+        event = {"type": "image_progress", "data": {
+            "stage": stage, "percent": percent, "taskId": task_id,
+            "provider": config.TRYON_MODE,
+        }}
+        # API 注入 event_sink 时即时进入 SSE/Netty；事件仍保留在最终状态供 Trace/评测使用。
+        event_sink = ctx.get("event_sink")
+        if event_sink:
+            await event_sink(event)
+            event["_liveEmitted"] = True
+        events.append(event)
+
+    provider_task_id = None
+    if config.TRYON_MODE == "mock":
+        for stage, percent in [("上传人像与衣物图", 20), ("解析穿搭要求", 45),
+                               ("模型生成中", 75), ("渲染完成", 100)]:
+            await progress(stage, percent)
+            await asyncio.sleep(0.5)
+        # 从预设结果池挑选（按 label 稳定哈希）
+        idx = int(hashlib.md5(label.encode()).hexdigest(), 16) % len(TRYON_PRESETS)
+        fname, preset_label = TRYON_PRESETS[idx]
+        url = f"/seed-images/{fname}"
+        tool_name = "mock_tryon"
+    else:
+        try:
+            from .tryon_provider import generate
+            generated = await generate({
+                "taskId": task_id,
+                "sessionId": ctx["session_id"],
+                "userId": ctx["user_id"],
+                "label": label,
+                "personImageUrl": params.get("personImageUrl"),
+                "garmentImageUrls": params.get("garmentImageUrls") or [],
+                "garmentIds": params.get("garmentIds") or [],
+                "params": params,
+            }, progress)
+            url = generated["url"]
+            provider_task_id = generated.get("providerTaskId")
+            preset_label = label
+            tool_name = "http_tryon"
+        except Exception as error:
+            error_text = str(error)[:300]
+            await update_task("failed", error_msg=error_text)
+            events.append(_tool_event("http_tryon", {"label": label}, False, error_text,
+                                      error_category=classify_error(error)))
+            return {"task_id": task["id"], "type": "image", "ok": False,
+                    "data": {"taskId": task_id},
+                    "error_category": classify_error(error), "events": events}
+
+    await update_task("done", result_url=url)
+    memory.state["last_image"] = {
+        "url": url, "label": preset_label, "taskId": task_id,
+        "provider": config.TRYON_MODE, "providerTaskId": provider_task_id,
+    }
+    events.append({"type": "image", "data": {
+        "url": url, "label": preset_label, "taskId": task_id,
+        "provider": config.TRYON_MODE, "providerTaskId": provider_task_id,
+    }})
+    provider_summary = ("本地 mock 结果" if config.TRYON_MODE == "mock" else "真实 HTTP 生图服务结果")
+    events.append(_tool_event(tool_name, {"label": label}, True,
+                              f"任务 #{task_id} 完成，结果地址 {url}（{provider_summary}）"))
     return {"task_id": task["id"], "type": "image", "ok": True,
-            "data": {"url": url, "label": preset_label, "taskId": task_id}, "events": events}
+            "data": {"url": url, "label": preset_label, "taskId": task_id,
+                     "provider": config.TRYON_MODE, "providerTaskId": provider_task_id},
+            "events": events}
 
 
 def _products_from_results(results: list) -> list:
@@ -266,6 +335,85 @@ async def do_order(task, state, memory, ctx) -> dict:
                 "data": {}, "error_category": err_cat, "events": events}
 
 
+async def do_order_query(task, state, memory, ctx) -> dict:
+    params = task.get("params", {})
+    order_no = (params.get("orderNo") or "").strip()
+    events = [_status_event("查询订单实时状态（MCP）…", "order_query")]
+    tool = "queryOrder" if order_no else "listOrders"
+    args = {"userId": ctx["user_id"]}
+    if order_no:
+        args["orderNo"] = order_no
+    try:
+        raw = await call_tool(tool, args)
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        orders = [data] if order_no and isinstance(data, dict) else (data if isinstance(data, list) else [])
+        events.append(_tool_event(tool, args, True, f"查到 {len(orders)} 笔订单"))
+        return {"task_id": task["id"], "type": "order_query", "ok": True,
+                "data": {"orders": orders}, "events": events}
+    except Exception as e:
+        err_cat = classify_error(e)
+        events.append(_tool_event(tool, args, False, f"订单查询失败: {e}", error_category=err_cat))
+        return {"task_id": task["id"], "type": "order_query", "ok": False,
+                "data": {"orders": []}, "error_category": err_cat, "events": events}
+
+
+async def do_logistics(task, state, memory, ctx) -> dict:
+    params = task.get("params", {})
+    order_no = (params.get("orderNo") or "").strip()
+    events = [_status_event("查询订单与物流实时状态（MCP）…", "logistics")]
+    try:
+        if not order_no:
+            raw_orders = await call_tool("listOrders", {"userId": ctx["user_id"]})
+            orders = json.loads(raw_orders) if isinstance(raw_orders, str) else raw_orders
+            orders = [o for o in (orders if isinstance(orders, list) else [])
+                      if o.get("status") not in ("cancelled", "pending")]
+            events.append(_tool_event("listOrders", {"userId": ctx["user_id"]}, True,
+                                      f"找到 {len(orders)} 笔可查询物流的订单"))
+            if len(orders) != 1:
+                return {"task_id": task["id"], "type": "logistics", "ok": True,
+                        "data": {"needsOrderNo": True, "orders": orders[:5]}, "events": events}
+            order_no = orders[0].get("orderNo") or ""
+        args = {"userId": ctx["user_id"], "orderNo": order_no}
+        raw = await call_tool("queryLogistics", args)
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        events.append(_tool_event("queryLogistics", args, True,
+                                  f"订单 {order_no} 物流状态查询完成"))
+        return {"task_id": task["id"], "type": "logistics", "ok": True,
+                "data": data if isinstance(data, dict) else {}, "events": events}
+    except Exception as e:
+        err_cat = classify_error(e)
+        events.append(_tool_event("queryLogistics", {"orderNo": order_no}, False,
+                                  f"物流查询失败: {e}", error_category=err_cat))
+        return {"task_id": task["id"], "type": "logistics", "ok": False,
+                "data": {}, "error_category": err_cat, "events": events}
+
+
+async def do_aftersale(task, state, memory, ctx) -> dict:
+    params = task.get("params", {})
+    action = params.get("action") or "policy"
+    events = [_status_event("查询售后政策与申请状态（MCP）…", "aftersale")]
+    tool = "listAfterSales" if action == "query" else "getAfterSalePolicy"
+    args = {"userId": ctx["user_id"]} if action == "query" else {}
+    try:
+        raw = await call_tool(tool, args)
+        value = json.loads(raw) if isinstance(raw, str) else raw
+        data = {"action": action}
+        if action == "query":
+            data["records"] = value if isinstance(value, list) else []
+            summary = f"查到 {len(data['records'])} 条售后记录"
+        else:
+            data["policy"] = value if isinstance(value, dict) else {}
+            summary = "已读取商城退换货政策（未创建退款申请）"
+        events.append(_tool_event(tool, args, True, summary))
+        return {"task_id": task["id"], "type": "aftersale", "ok": True,
+                "data": data, "events": events}
+    except Exception as e:
+        err_cat = classify_error(e)
+        events.append(_tool_event(tool, args, False, f"售后查询失败: {e}", error_category=err_cat))
+        return {"task_id": task["id"], "type": "aftersale", "ok": False,
+                "data": {"action": action}, "error_category": err_cat, "events": events}
+
+
 async def execute_task(task: dict, results: list, memory, ctx: dict) -> dict:
     """执行单个任务（幂等：已完成则跳过）。state 即已完成结果列表。"""
     done = [r["task_id"] for r in results]
@@ -286,5 +434,11 @@ async def execute_task(task: dict, results: list, memory, ctx: dict) -> dict:
         return await do_favorite(task, results, memory, ctx)
     if t == "order":
         return await do_order(task, results, memory, ctx)
+    if t == "order_query":
+        return await do_order_query(task, results, memory, ctx)
+    if t == "logistics":
+        return await do_logistics(task, results, memory, ctx)
+    if t == "aftersale":
+        return await do_aftersale(task, results, memory, ctx)
     return {"task_id": task["id"], "type": t, "ok": False,
             "data": {}, "events": [_tool_event(t, task.get("params", {}), False, f"未知任务类型 {t}")]}

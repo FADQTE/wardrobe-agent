@@ -34,9 +34,9 @@ if (-not (Test-Path "$root\agent-python\.venv")) {
     if (-not (Test-Path .env)) { Copy-Item .env.example .env }
     Set-Location $root
 }
-# 种子数据幂等，每次启动刷新演示数据（可注释跳过）
-Write-Host '  写入种子数据 (200 商品 / 44 规则 / 14 衣橱)...' -ForegroundColor DarkGray
-& "$root\agent-python\.venv\Scripts\python.exe" "$root\scripts\seed.py"
+# 仅空库初始化；禁止日常启动清空聊天、订单和 Session Memory。
+Write-Host '  检查种子数据（仅空库初始化，保留现有聊天与订单）...' -ForegroundColor DarkGray
+& "$root\agent-python\.venv\Scripts\python.exe" "$root\scripts\seed.py" --if-empty
 
 Write-Host '== 4/5 启动后端服务 (Spring Boot :8080 / Agent :8000 / Netty WS :8090) ==' -ForegroundColor Cyan
 Start-Process powershell -ArgumentList '-NoExit','-Command',"`$env:JAVA_HOME='D:\jdk17'; Set-Location '$root\backend-java'; mvn -s '$root\.mvn\settings.xml' spring-boot:run"

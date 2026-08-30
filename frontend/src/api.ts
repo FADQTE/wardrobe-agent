@@ -68,7 +68,37 @@ export interface Order {
   totalAmount: number
   status: string
   logisticsNo?: string
+  receiverName?: string
+  receiverPhone?: string
+  receiverAddress?: string
   createdAt?: string
+}
+
+export interface OrderItem {
+  id: number
+  orderId: number
+  productId: number
+  productName: string
+  price: number
+  quantity: number
+}
+
+export interface AfterSale {
+  id: number
+  requestNo: string
+  orderId: number
+  userId: number
+  type: 'refund' | 'return_refund' | 'exchange'
+  status: 'pending' | 'approved' | 'rejected' | 'completed'
+  reason?: string
+  amount: number
+  createdAt?: string
+}
+
+export interface OrderDetail {
+  order: Order
+  items: OrderItem[]
+  afterSale?: AfterSale
 }
 
 export interface PersistedChatMessage {
@@ -134,6 +164,9 @@ export const addFavorite = (userId: number, productId: number) =>
 
 export const listFavorites = (userId: number) => api<Product[]>(`/api/favorites?userId=${userId}`)
 
+export const removeFavorite = (userId: number, productId: number) =>
+  api<void>(`/api/favorites/${productId}?userId=${userId}`, { method: 'DELETE' })
+
 export const createOrder = (userId: number, items: { productId: number; quantity: number }[]) =>
   api<Order>('/api/orders', {
     method: 'POST',
@@ -146,8 +179,21 @@ export const createOrder = (userId: number, items: { productId: number; quantity
     }),
   })
 
-export const payOrder = (id: number) => api<void>(`/api/orders/${id}/pay`, { method: 'POST' })
+export const payOrder = (id: number, userId: number) =>
+  api<void>(`/api/orders/${id}/pay?userId=${userId}`, { method: 'POST' })
 export const listOrders = (userId: number) => api<Order[]>(`/api/orders?userId=${userId}`)
+
+export const getOrderDetail = (id: number, userId: number) =>
+  api<OrderDetail>(`/api/orders/${id}?userId=${userId}`)
+
+export const cancelOrder = (id: number, userId: number) =>
+  api<void>(`/api/orders/${id}/cancel?userId=${userId}`, { method: 'POST' })
+
+export const applyAfterSale = (userId: number, orderId: number, type = 'refund', reason = '') =>
+  api<AfterSale>('/api/after-sales', {
+    method: 'POST',
+    body: JSON.stringify({ userId, orderId, type, reason }),
+  })
 
 export const getChatMessages = (sessionId: string) =>
   api<PersistedChatMessage[]>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`)

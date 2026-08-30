@@ -94,7 +94,15 @@ public class OrderService {
     }
 
     public MallOrder cancel(Long orderId) {
-        return transit(orderId, PENDING, CANCELLED, "仅待支付订单可取消");
+        MallOrder order = transit(orderId, PENDING, CANCELLED, "仅待支付订单可取消");
+        items(orderId).forEach(item -> productService.restoreStock(item.getProductId(), item.getQuantity()));
+        return order;
+    }
+
+    @Transactional
+    public MallOrder cancelForUser(Long orderId, Long userId) {
+        detailForUser(orderId, userId);
+        return cancel(orderId);
     }
 
     public List<MallOrder> listByUser(Long userId) {
@@ -110,10 +118,26 @@ public class OrderService {
         return order;
     }
 
+    public MallOrder detailForUser(Long orderId, Long userId) {
+        MallOrder order = detail(orderId);
+        if (userId == null || !userId.equals(order.getUserId())) {
+            throw new BizException(403, "无权访问该订单");
+        }
+        return order;
+    }
+
     public MallOrder findByNo(String orderNo) {
         MallOrder order = orderMapper.selectOne(new QueryWrapper<MallOrder>().eq("order_no", orderNo));
         if (order == null) {
             throw new BizException(404, "订单不存在: " + orderNo);
+        }
+        return order;
+    }
+
+    public MallOrder findByNoForUser(String orderNo, Long userId) {
+        MallOrder order = findByNo(orderNo);
+        if (userId == null || !userId.equals(order.getUserId())) {
+            throw new BizException(403, "无权访问该订单");
         }
         return order;
     }

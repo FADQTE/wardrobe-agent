@@ -56,4 +56,12 @@ public class ProductService {
             throw new BizException(409, "库存扣减失败: " + p.getName());
         }
     }
+
+    /** 取消未支付订单时回补库存。 */
+    public void restoreStock(Long productId, int quantity) {
+        productMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<Product>()
+                        .setSql("stock = stock + " + Math.max(quantity, 1))
+                        .eq("id", productId));
+    }
 }

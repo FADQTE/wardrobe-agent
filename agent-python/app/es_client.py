@@ -51,14 +51,49 @@ class EsClient:
                 return None
         return None
 
-    @property
-    def has_vector(self) -> bool:
+    def index_has_vector(self, index: str) -> bool:
         try:
-            m = self.es.indices.get_mapping(index=config.PRODUCT_INDEX)
-            props = m[config.PRODUCT_INDEX]["mappings"]["properties"]
+            m = self.es.indices.get_mapping(index=index)
+            props = m[index]["mappings"]["properties"]
             return "embedding" in props
         except Exception:
             return False
+
+    def vector_dims(self, index: str) -> int | None:
+        try:
+            m = self.es.indices.get_mapping(index=index)
+            field = m[index]["mappings"]["properties"].get("embedding") or {}
+            return int(field["dims"]) if field.get("dims") else None
+        except Exception:
+            return None
+
+    @property
+    def has_vector(self) -> bool:
+        """向后兼容：商品索引是否具备向量字段。新代码应显式传入索引名。"""
+        return self.index_has_vector(config.PRODUCT_INDEX)
+
+    def index_status(self) -> dict:
+        """返回双索引的文档数、向量覆盖数与 Mapping 状态，供健康页验收。"""
+        result = {}
+        for index in (config.PRODUCT_INDEX, config.RULE_INDEX):
+            try:
+                exists = bool(self.es.indices.exists(index=index))
+                if not exists:
+                    result[index] = {"exists": False, "documents": 0,
+                                     "vectorDocuments": 0, "vectorDims": None}
+                    continue
+                has_vector = self.index_has_vector(index)
+                result[index] = {
+                    "exists": True,
+                    "documents": int(self.es.count(index=index)["count"]),
+                    "vectorDocuments": int(self.es.count(
+                        index=index, query={"exists": {"field": "embedding"}})["count"])
+                    if has_vector else 0,
+                    "vectorDims": self.vector_dims(index),
+                }
+            except Exception as e:
+                result[index] = {"exists": False, "error": str(e)[:160]}
+        return result
 
 
 _es: Optional[EsClient] = None

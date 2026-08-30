@@ -90,6 +90,58 @@ def _deactivate_family(es, rule_id: int, title: str):
         print(f"[rules] deactivate failed: {e}", flush=True)
 
 
+def _base_rule_doc(rule: dict) -> dict:
+    tags = rule.get("tags") or []
+    if isinstance(tags, str):
+        try:
+            tags = json.loads(tags)
+        except (TypeError, json.JSONDecodeError):
+            tags = []
+    return {
+        "title": rule.get("title"), "content": rule.get("content"),
+        "type": rule.get("type"), "version": rule.get("version"),
+        "publish_status": rule.get("publishStatus"),
+        "effective_from": _es_dt(rule.get("effectiveFrom")),
+        "effective_to": _es_dt(rule.get("effectiveTo")),
+        "source": rule.get("source"), "tags": tags,
+    }
+
+
+def _build_rule_docs(es, rules: list[dict]) -> tuple[list[dict], str]:
+    """构建规则索引文档；向量索引存在时同步生成 title+content embedding。"""
+    docs = [_base_rule_doc(rule) for rule in rules]
+    if not docs or not es.index_has_vector(config.RULE_INDEX):
+        return docs, "index_without_vector"
+    vectors = es.embed([
+        f"{doc.get('title') or ''} {doc.get('content') or ''}".strip() for doc in docs
+    ])
+    expected_dims = es.vector_dims(config.RULE_INDEX)
+    if not vectors or len(vectors) != len(docs):
+        return docs, "embedding_unavailable"
+    if expected_dims and any(len(vector) != expected_dims for vector in vectors):
+        return docs, "dimension_mismatch"
+    for doc, vector in zip(docs, vectors):
+        doc["embedding"] = vector
+    return docs, "ok"
+
+
+def _apply_latest_versions(rules: list[dict], docs: list[dict]) -> None:
+    """全量同步时同族只保留最高版本 published，避免通知丢失后旧版继续被召回。"""
+    latest: dict[str, tuple[int, int]] = {}
+    for rule, doc in zip(rules, docs):
+        if doc.get("publish_status") != "published":
+            continue
+        family = _family(doc.get("title") or "")
+        marker = (int(doc.get("version") or 0), int(rule.get("id") or 0))
+        if marker > latest.get(family, (-1, -1)):
+            latest[family] = marker
+    for rule, doc in zip(rules, docs):
+        family = _family(doc.get("title") or "")
+        marker = (int(doc.get("version") or 0), int(rule.get("id") or 0))
+        if doc.get("publish_status") == "published" and latest.get(family) != marker:
+            doc["publish_status"] = "offline"
+
+
 @router.post("/api/chat")
 async def chat(req: ChatRequest):
     async def gen():
@@ -128,6 +180,17 @@ async def chat(req: ChatRequest):
                 else:
                     yield _sse(ev)
 
+            # 执行中事件经 event_sink 即时进入推送通道（SSE 队列 / WS 网关），
+            # 不再等 LangGraph 节点结束才随 updates 批量出现。
+            live_queue: asyncio.Queue = asyncio.Queue()
+
+            async def deliver(ev):
+                trace.record(ev)
+                if ws_mode:
+                    await push(ev)
+                else:
+                    live_queue.put_nowait(ev)
+
             # Runtime Context 双通道（trusted_for_model / system_only + 冲突解析）
             from .context import RuntimeContext
             runtime = RuntimeContext(
@@ -140,17 +203,34 @@ async def chat(req: ChatRequest):
             inputs = {
                 "session_id": req.session_id, "user_id": req.user_id,
                 "message": req.message, "memory_desc": memory.describe(), "mem": memory,
-                "runtime": runtime,
+                "runtime": runtime, "event_sink": deliver,
             }
-            final_state = None
-            async for mode, chunk in graph.astream(inputs, stream_mode=["updates", "values"]):
-                if mode == "updates":
-                    for _node, delta in chunk.items():
-                        for ev in delta.get("events", []):
-                            async for sse_line in emit(ev):
-                                yield sse_line
-                else:
-                    final_state = chunk
+
+            async def run_graph() -> dict | None:
+                final = None
+                async for mode, chunk in graph.astream(inputs, stream_mode=["updates", "values"]):
+                    if mode == "updates":
+                        for _node, delta in chunk.items():
+                            for ev in delta.get("events", []):
+                                if ev.get("_liveEmitted"):
+                                    continue  # 已在执行中即时推送，避免重复
+                                await deliver(ev)
+                    else:
+                        final = chunk
+                return final
+
+            graph_task = asyncio.create_task(run_graph())
+            try:
+                while True:
+                    await asyncio.wait({graph_task}, timeout=0.05)
+                    while not live_queue.empty():
+                        yield _sse(live_queue.get_nowait())
+                    if graph_task.done():
+                        break
+                final_state = graph_task.result()
+            finally:
+                if not graph_task.done():
+                    graph_task.cancel()
 
             await memory.save()
             text = (final_state or {}).get("final_text", "") or ""
@@ -225,45 +305,40 @@ async def rules_reindex(req: ReindexRequest):
             r.raise_for_status()
             rule = r.json()["data"]
         es = get_es()
-        doc = {
-            "title": rule.get("title"), "content": rule.get("content"),
-            "type": rule.get("type"), "version": rule.get("version"),
-            "publish_status": rule.get("publishStatus"),
-            "effective_from": _es_dt(rule.get("effectiveFrom")),
-            "effective_to": _es_dt(rule.get("effectiveTo")),
-            "source": rule.get("source"),
-            "tags": json.loads(rule.get("tags") or "[]"),
-        }
-        es.es.index(index=config.RULE_INDEX, id=str(req.rule_id), document=doc)
-        # 下架同族旧版本（族键相同、已发布、非当前 id）
-        _deactivate_family(es, req.rule_id, doc.get("title", ""))
+        docs, vector_state = await asyncio.to_thread(_build_rule_docs, es, [rule])
+        doc = docs[0]
+        es.es.index(index=config.RULE_INDEX, id=str(req.rule_id), document=doc,
+                    refresh="wait_for")
+        # 只有发布新版本才下架同族旧版；下线旧版本不能误伤当前最新版。
+        if doc.get("publish_status") == "published":
+            _deactivate_family(es, req.rule_id, doc.get("title", ""))
         rag.invalidate_cache()
-        return {"code": 0, "msg": f"rule #{req.rule_id} 已增量更新索引，同族旧版本已下架，缓存已失效"}
+        return {"code": 0, "msg": f"rule #{req.rule_id} 已增量更新索引，"
+                f"vector={vector_state}，缓存已失效"}
     except Exception as e:
         return {"code": 500, "msg": f"reindex 失败: {e}"}
 
 
 @router.post("/internal/rules/fullsync")
 async def rules_fullsync():
-    """兜底：从 Java 全量同步已发布规则到 ES。"""
+    """兜底：从 Java 全量同步全部规则，修复漏通知、旧版状态与缓存。"""
     try:
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{config.JAVA_API_URL}/rules", params={"status": "published"})
+            r = await c.get(f"{config.JAVA_API_URL}/rules")
+            r.raise_for_status()
             rules = r.json()["data"]
         es = get_es()
-        for rule in rules:
-            doc = {
-                "title": rule.get("title"), "content": rule.get("content"),
-                "type": rule.get("type"), "version": rule.get("version"),
-                "publish_status": rule.get("publishStatus"),
-                "effective_from": _es_dt(rule.get("effectiveFrom")),
-                "effective_to": _es_dt(rule.get("effectiveTo")),
-                "source": rule.get("source"),
-                "tags": json.loads(rule.get("tags") or "[]"),
-            }
+        docs, vector_state = await asyncio.to_thread(_build_rule_docs, es, rules)
+        _apply_latest_versions(rules, docs)
+        ids = [str(rule.get("id")) for rule in rules]
+        for rule, doc in zip(rules, docs):
             es.es.index(index=config.RULE_INDEX, id=str(rule.get("id")), document=doc)
+        if ids:
+            es.es.delete_by_query(index=config.RULE_INDEX, body={
+                "query": {"bool": {"must_not": [{"ids": {"values": ids}}]}}
+            }, conflicts="proceed", refresh=True)
         rag.invalidate_cache()
-        return {"code": 0, "msg": f"fullsync {len(rules)} rules"}
+        return {"code": 0, "msg": f"fullsync {len(rules)} rules, vector={vector_state}"}
     except Exception as e:
         return {"code": 500, "msg": f"fullsync 失败: {e}"}
 

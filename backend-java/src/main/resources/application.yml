@@ -9,6 +9,11 @@ spring:
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      # Docker 初始化 SQL 只会在新数据卷执行；该增量脚本保证旧环境也能安全补表。
+      mode: always
+      schema-locations: classpath:schema-extension.sql
   ai:
     mcp:
       server:

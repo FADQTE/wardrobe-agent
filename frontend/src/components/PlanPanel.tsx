@@ -10,7 +10,8 @@ export interface PlanData {
   intents?: any
   dag?: { tasks: { id: string; name: string; type: string; deps: string[] }[] }
   tools?: { name: string; args: any; ok: boolean; summary: string; errorCategory?: string }[]
-  ragRules?: { title: string; content: string; source: string; timeValid: boolean; version?: number }[]
+  ragRules?: { title: string; content: string; source: string; timeValid: boolean; version?: number;
+    retrievalMode?: string; retrievalChannels?: string[]; rrfScore?: number }[]
   memory?: any
   statuses?: { text: string; stage: string }[]
   safety?: any
@@ -164,6 +165,10 @@ export default function PlanPanel({ data }: { data: PlanData }) {
                 <Tag color="purple" style={{ fontSize: 10 }}>RAG</Tag>
                 <span>{r.title}</span>
                 <Tag color={r.timeValid ? 'green' : 'red'} style={{ fontSize: 10 }}>{r.timeValid ? '时间窗内' : '已过滤'}</Tag>
+                {r.retrievalMode && <Tag color="blue" style={{ fontSize: 10 }}>{r.retrievalMode}</Tag>}
+                {(r.retrievalChannels?.length ?? 0) > 0 && (
+                  <Tag style={{ fontSize: 10 }}>{r.retrievalChannels?.join(' + ')}</Tag>
+                )}
                 <span style={{ color: '#999' }}>· {r.source}</span>
               </Space>
               <div style={{ color: '#888' }}>{r.content}</div>

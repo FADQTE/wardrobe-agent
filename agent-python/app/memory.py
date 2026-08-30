@@ -2,6 +2,7 @@
 """Session Memory：人物形象/选中单品/候选搭配，落库到 Java 侧 chat_session。"""
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -25,17 +26,32 @@ class SessionMemory:
         import copy
         self.state = copy.deepcopy(DEFAULT_MEMORY)
         self.exists = False
+        # 最近对话只用于当轮上下文，不写回 session state，避免与 chat_message 重复持久化。
+        self.recent_messages: list[dict] = []
 
     async def load(self):
         try:
             async with httpx.AsyncClient(timeout=5) as c:
-                r = await c.get(f"{config.JAVA_API_URL}/chat/sessions/{self.session_id}")
-                if r.status_code == 200:
-                    data = r.json().get("data", {})
+                state_req = c.get(f"{config.JAVA_API_URL}/chat/sessions/{self.session_id}")
+                messages_req = c.get(f"{config.JAVA_API_URL}/chat/sessions/{self.session_id}/messages")
+                state_res, messages_res = await asyncio.gather(
+                    state_req, messages_req, return_exceptions=True,
+                )
+                # 两份记忆互相独立：会话状态或聊天记录任一接口临时失败时，
+                # 仍然保留另一份可用上下文，不能因为一个异常把两份都静默丢掉。
+                if isinstance(state_res, httpx.Response) and state_res.status_code == 200:
+                    data = state_res.json().get("data", {})
                     self.exists = bool(data)
                     state = data.get("state")
                     if state:
                         self.state.update(json.loads(state))
+                if isinstance(messages_res, httpx.Response) and messages_res.status_code == 200:
+                    rows = messages_res.json().get("data") or []
+                    self.recent_messages = [
+                        {"role": row.get("role"), "content": row.get("content") or ""}
+                        for row in rows[-8:]
+                        if row.get("role") in ("user", "assistant") and row.get("content")
+                    ]
         except Exception:
             pass
 
@@ -84,6 +100,13 @@ class SessionMemory:
     def describe(self) -> str:
         """把记忆压缩成给 LLM 的上下文描述。"""
         parts = []
+        if self.recent_messages:
+            dialogue = []
+            for row in self.recent_messages:
+                role = "用户" if row["role"] == "user" else "助手"
+                content = " ".join(str(row["content"]).split())[:240]
+                dialogue.append(f"{role}: {content}")
+            parts.append("最近对话（按时间顺序）:\n" + "\n".join(dialogue))
         if self.state["persona"]:
             p = self.state["persona"]
             parts.append(f"用户形象: {p}")
