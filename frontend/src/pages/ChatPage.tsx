@@ -23,7 +23,7 @@ interface ChatMsg {
   products?: Product[]
   productTitle?: string
   outfit?: { name: string; items: { name: string; imageUrl?: string; source: string; price?: number }[]; reason?: string; ruleSources?: string[] }
-  image?: { url: string; label: string; taskId?: number }
+  image?: { url: string; label: string; taskId?: number; provider?: string; isSimulation?: boolean; notice?: string }
   progress?: { percent: number; stage: string }
   handoff?: string
   error?: boolean
@@ -318,7 +318,14 @@ function ChatWorkspace({ session, onSessionChanged }: ChatWorkspaceProps) {
         patch({ progress: { percent: ev.data.percent ?? 0, stage: ev.data.stage ?? '生成中' } })
         break
       case 'image':
-        patch({ image: { url: ev.data.url, label: ev.data.label ?? '换装效果图', taskId: ev.data.taskId } })
+        patch({ image: {
+          url: ev.data.url,
+          label: ev.data.label ?? '换装效果图',
+          taskId: ev.data.taskId,
+          provider: ev.data.provider,
+          isSimulation: !!ev.data.isSimulation,
+          notice: ev.data.notice,
+        } })
         break
       case 'memory':
         patchPlan({ memory: ev.data?.memory ?? ev.data })
@@ -617,11 +624,16 @@ function ChatWorkspace({ session, onSessionChanged }: ChatWorkspaceProps) {
               <div style={{ marginTop: 8 }}>
                 <AntImage src={m.image.url} width={240} style={{ borderRadius: 8 }} />
                 <div style={{ marginTop: 4 }}>
-                  <Tag color="magenta">{m.image.label}</Tag>
+                  <Tag color={m.image.isSimulation ? 'orange' : 'magenta'}>{m.image.label}</Tag>
                   <Button size="small" type="link" onClick={() => send('基于这张效果图继续调整：换一条裤子')}>
                     基于此图继续调整 →
                   </Button>
                 </div>
+                {m.image.isSimulation && (
+                  <Typography.Text type="warning" style={{ display: 'block', maxWidth: 520, fontSize: 12, marginTop: 4 }}>
+                    {m.image.notice || '当前未接入生图模型；这是按推荐风格匹配的本地模拟预览，不代表真人试穿或真实生成效果。'}
+                  </Typography.Text>
+                )}
               </div>
             )}
           </div>

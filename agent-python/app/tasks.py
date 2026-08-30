@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import re
 
@@ -13,13 +12,91 @@ from . import config, rag
 from .mcp_client import call_tool, get_mcp_tools
 
 TRYON_PRESETS = [
-    ("tryon_result_0.svg", "白衬衫·通勤套装"),
-    ("tryon_result_1.svg", "风衣叠穿·街拍"),
-    ("tryon_result_2.svg", "小黑裙·约会"),
-    ("tryon_result_3.svg", "西装·商务"),
-    ("tryon_result_4.svg", "卫衣·运动"),
-    ("tryon_result_5.svg", "大衣·冬日"),
+    {"file": "tryon_result_0.svg", "label": "白衬衫·通勤套装",
+     "keywords": ("白衬衫", "衬衫", "通勤", "简约")},
+    {"file": "tryon_result_1.svg", "label": "风衣叠穿·街拍",
+     "keywords": ("风衣", "叠穿", "街拍", "街头")},
+    {"file": "tryon_result_2.svg", "label": "小黑裙·约会",
+     "keywords": ("小黑裙", "连衣裙", "短裙", "半身裙", "裙", "约会")},
+    {"file": "tryon_result_3.svg", "label": "西装·商务",
+     "keywords": ("西装", "西服", "商务", "正装", "面试")},
+    {"file": "tryon_result_4.svg", "label": "卫衣·运动",
+     "keywords": ("卫衣", "运动", "休闲", "跑步", "健身")},
+    {"file": "tryon_result_5.svg", "label": "大衣·冬日",
+     "keywords": ("大衣", "冬日", "冬季", "保暖", "羊毛")},
 ]
+
+MOCK_TRYON_NOTICE = "当前未接入生图模型；下图是按推荐单品和风格匹配的本地模拟预览，不代表真人试穿或真实生成效果。"
+
+
+def _tryon_garments(task: dict, results: list, memory) -> list[dict]:
+    """从 image 的依赖结果提取实际单品；跨轮调整时回退到最近一套候选搭配。"""
+    dependency_ids = set(task.get("deps") or [])
+    dependency_results = [
+        result for result in results
+        if not dependency_ids or result.get("task_id") in dependency_ids
+    ]
+    garments: list[dict] = []
+    for result in dependency_results:
+        if not result.get("ok"):
+            continue
+        if result.get("type") == "wardrobe":
+            garments.extend(result.get("data", {}).get("items", []))
+        elif result.get("type") == "product":
+            garments.extend(result.get("data", {}).get("products", []))
+
+    if not garments and memory:
+        candidates = memory.state.get("candidates") or []
+        if candidates:
+            garments.extend(candidates[-1].get("items") or [])
+        elif memory.state.get("selected_items"):
+            garments.extend(memory.state["selected_items"])
+
+    # 同一单品可能同时出现在检索结果与记忆中，按 id/name 稳定去重。
+    unique, seen = [], set()
+    for garment in garments:
+        key = (garment.get("id"), garment.get("name"))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(garment)
+    return unique
+
+
+def _garment_text(garments: list[dict]) -> str:
+    fields = ("name", "category", "color", "season", "style", "detail")
+    return " ".join(
+        str(garment.get(field) or "")
+        for garment in garments for field in fields
+    ).lower()
+
+
+def _tryon_style_context(task: dict, results: list) -> str:
+    """提取依赖规则中的风格描述，供没有完整衣物图时选择最接近的模拟素材。"""
+    dependency_ids = set(task.get("deps") or [])
+    parts = []
+    for result in results:
+        if dependency_ids and result.get("task_id") not in dependency_ids:
+            continue
+        if result.get("ok") and result.get("type") in ("rag", "rule_query"):
+            for rule in result.get("data", {}).get("rules", []):
+                parts.extend((str(rule.get("title") or ""), str(rule.get("content") or ""),
+                              str(rule.get("tags") or "")))
+    return " ".join(parts).lower()
+
+
+def _select_mock_preset(label: str, garments: list[dict], style_context: str = "") -> dict:
+    """实际单品优先于泛化请求标签，避免西装推荐被哈希成裙装预览。"""
+    garment_context = _garment_text(garments)
+    request_context = f"{label or ''} {style_context}".lower()
+    best_index, best_score = 0, 0
+    for index, preset in enumerate(TRYON_PRESETS):
+        garment_score = sum(3 for keyword in preset["keywords"] if keyword in garment_context)
+        request_score = sum(1 for keyword in preset["keywords"] if keyword in request_context)
+        score = garment_score + request_score
+        if score > best_score:
+            best_index, best_score = index, score
+    return TRYON_PRESETS[best_index]
 
 
 def _tool_event(name, args, ok, summary, error_category=None):
@@ -177,8 +254,16 @@ async def do_product(task, state, memory) -> dict:
 
 
 async def do_image(task, state, memory, ctx) -> dict:
-    params = task.get("params", {})
+    params = dict(task.get("params", {}))
     label = params.get("label") or "换装效果"
+    garments = _tryon_garments(task, state, memory)
+    derived_ids = [garment.get("id") for garment in garments if garment.get("id") is not None]
+    derived_urls = [garment.get("imageUrl") for garment in garments if garment.get("imageUrl")]
+    params["garmentIds"] = params.get("garmentIds") or derived_ids
+    params["garmentImageUrls"] = params.get("garmentImageUrls") or derived_urls
+    params["garmentNames"] = params.get("garmentNames") or [
+        garment.get("name") for garment in garments if garment.get("name")
+    ]
     events = [_status_event("创建换装任务（统一管理输入/状态/结果地址）…", "image")]
     task_id = None
     try:
@@ -220,14 +305,14 @@ async def do_image(task, state, memory, ctx) -> dict:
 
     provider_task_id = None
     if config.TRYON_MODE == "mock":
-        for stage, percent in [("上传人像与衣物图", 20), ("解析穿搭要求", 45),
-                               ("模型生成中", 75), ("渲染完成", 100)]:
+        for stage, percent in [("加载本地模拟素材", 20), ("匹配推荐单品与风格", 45),
+                               ("生成模拟预览", 75), ("模拟预览完成", 100)]:
             await progress(stage, percent)
             await asyncio.sleep(0.5)
-        # 从预设结果池挑选（按 label 稳定哈希）
-        idx = int(hashlib.md5(label.encode()).hexdigest(), 16) % len(TRYON_PRESETS)
-        fname, preset_label = TRYON_PRESETS[idx]
-        url = f"/seed-images/{fname}"
+        # 预设图必须与本轮依赖返回的实际单品一致；无单品时才使用请求标签兜底。
+        preset = _select_mock_preset(label, garments, _tryon_style_context(task, state))
+        preset_label = f"{preset['label']}（模拟预览）"
+        url = f"/seed-images/{preset['file']}"
         tool_name = "mock_tryon"
     else:
         try:
@@ -259,17 +344,27 @@ async def do_image(task, state, memory, ctx) -> dict:
     memory.state["last_image"] = {
         "url": url, "label": preset_label, "taskId": task_id,
         "provider": config.TRYON_MODE, "providerTaskId": provider_task_id,
+        "isSimulation": config.TRYON_MODE == "mock",
     }
     events.append({"type": "image", "data": {
         "url": url, "label": preset_label, "taskId": task_id,
         "provider": config.TRYON_MODE, "providerTaskId": provider_task_id,
+        "isSimulation": config.TRYON_MODE == "mock",
+        "notice": MOCK_TRYON_NOTICE if config.TRYON_MODE == "mock" else None,
+        "garmentNames": params.get("garmentNames") or [],
     }})
     provider_summary = ("本地 mock 结果" if config.TRYON_MODE == "mock" else "真实 HTTP 生图服务结果")
-    events.append(_tool_event(tool_name, {"label": label}, True,
+    events.append(_tool_event(tool_name, {
+        "label": label, "garmentIds": params.get("garmentIds") or [],
+        "garmentNames": params.get("garmentNames") or [],
+    }, True,
                               f"任务 #{task_id} 完成，结果地址 {url}（{provider_summary}）"))
     return {"task_id": task["id"], "type": "image", "ok": True,
             "data": {"url": url, "label": preset_label, "taskId": task_id,
-                     "provider": config.TRYON_MODE, "providerTaskId": provider_task_id},
+                     "provider": config.TRYON_MODE, "providerTaskId": provider_task_id,
+                     "isSimulation": config.TRYON_MODE == "mock",
+                     "notice": MOCK_TRYON_NOTICE if config.TRYON_MODE == "mock" else None,
+                     "garmentNames": params.get("garmentNames") or []},
             "events": events}
 
 

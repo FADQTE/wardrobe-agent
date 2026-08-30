@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import httpx
 
-from app import config, tasks, tryon_provider
+from app import config, graph, tasks, tryon_provider
 
 
 def _install_transport(handler):
@@ -133,6 +133,49 @@ class DoImageLiveProgressTests(unittest.IsolatedAsyncioTestCase):
         image_events = [ev for ev in result["events"] if ev["type"] == "image"]
         self.assertEqual(1, len(image_events))
         self.assertTrue(image_events[0]["data"]["url"].startswith("/seed-images/"))
+        self.assertTrue(image_events[0]["data"]["isSimulation"])
+        self.assertIn("未接入生图模型", image_events[0]["data"]["notice"])
+
+    async def test_mock_tryon_uses_dependency_garments_instead_of_generic_label_hash(self):
+        dependency_results = [{
+            "task_id": "t1", "type": "product", "ok": True,
+            "data": {"products": [
+                {"id": 11, "name": "黑色西装裤", "category": "bottom", "imageUrl": "/pants.svg"},
+                {"id": 12, "name": "黑色西装外套", "category": "outerwear", "imageUrl": "/jacket.svg"},
+            ]},
+        }]
+        task = {"id": "t2", "type": "image",
+                "params": {"label": "基于当前搭配的换装效果"}, "deps": ["t1"]}
+        with patch.object(config, "TRYON_MODE", "mock"), \
+                patch.object(tasks.asyncio, "sleep", return_value=None), \
+                _install_transport(self._java_handler()):
+            result = await tasks.do_image(task, dependency_results, _MemoryStub(),
+                                          {"session_id": "s1", "user_id": 1, "event_sink": None})
+
+        self.assertEqual("/seed-images/tryon_result_3.svg", result["data"]["url"])
+        self.assertIn("西装", result["data"]["label"])
+        self.assertNotIn("小黑裙", result["data"]["label"])
+        tool_event = next(event for event in result["events"] if event["type"] == "tool"
+                          and event["data"]["name"] == "mock_tryon")
+        self.assertEqual([11, 12], tool_event["data"]["args"]["garmentIds"])
+
+    async def test_mock_assembly_always_declares_local_simulation(self):
+        state = {
+            "safety_data": {"blocked_user_request": False},
+            "intent_data": {"needsClarification": False},
+            "results": [{
+                "task_id": "t1", "type": "image", "ok": True,
+                "data": {"label": "西装·商务（模拟预览）", "provider": "mock",
+                         "isSimulation": True},
+            }],
+            "mem": None,
+        }
+        with patch.object(config, "MOCK_AGENT", True):
+            result = await graph.assemble_node(state)
+
+        self.assertIn("未接入生图模型", result["final_text"])
+        self.assertIn("本地模拟预览", result["final_text"])
+        self.assertIn("不代表真人试穿", result["final_text"])
 
     async def test_http_tryon_success_reports_provider_result(self):
         live = []

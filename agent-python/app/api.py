@@ -61,6 +61,9 @@ def _history_meta(final_state: dict | None) -> dict:
                 "url": data.get("url"),
                 "label": data.get("label") or "换装效果图",
                 "taskId": data.get("taskId"),
+                "provider": data.get("provider"),
+                "isSimulation": data.get("isSimulation", False),
+                "notice": data.get("notice"),
             }
         elif ev.get("type") == "handoff":
             meta["handoff"] = data.get("reason")

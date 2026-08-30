@@ -26,7 +26,7 @@ from .context import build_context_report
 from .intent import parse_intent
 from .llm import get_llm
 from .safety import REFUSAL_ANSWER, build_safety_decision
-from .tasks import execute_task
+from .tasks import MOCK_TRYON_NOTICE, execute_task
 
 TASK_NAMES = {
     "wardrobe": "衣橱查询", "rag": "穿搭规则RAG", "rule_query": "活动规则查询",
@@ -308,7 +308,10 @@ def _compose_mock(state: AgentState) -> str:
             f"{p['name']} ¥{p['price']}（#{p['id']}）" for p in ps) + "。可直接让我收藏或下单。")
     img = _get_results(state, "image")
     if img:
-        parts.append("换装效果图已生成，可点击“基于此图继续调整”让我修改。")
+        if img[0].get("data", {}).get("isSimulation"):
+            parts.append("已生成与推荐风格匹配的本地模拟预览，可点击“基于此图继续调整”让我修改。")
+        else:
+            parts.append("换装效果图已生成，可点击“基于此图继续调整”让我修改。")
     orders = _get_results(state, "order")
     for o in orders:
         data = o.get("data", {})
@@ -349,7 +352,9 @@ def _compose_llm(state: AgentState) -> str:
             results.append({"type": "order", "orderNo": r["data"].get("orderNo"),
                             "status": r["data"].get("status")})
         elif r.get("type") == "image" and r.get("ok"):
-            results.append({"type": "image", "label": r["data"].get("label")})
+            results.append({"type": "image", "label": r["data"].get("label"),
+                            "provider": r["data"].get("provider"),
+                            "isSimulation": r["data"].get("isSimulation")})
         elif r.get("type") == "favorite" and r.get("ok"):
             results.append({"type": "favorite", "count": len(r["data"].get("ids", []))})
         elif r.get("type") in ("order_query", "logistics", "aftersale") and r.get("ok"):
@@ -362,7 +367,8 @@ def _compose_llm(state: AgentState) -> str:
     system = ("你是智能衣橱的穿搭助手。根据任务结果给出简洁实用的搭配建议，"
               "注明规则来源；语气亲切，中文回答，200 字以内。"
               "严格以工具结果为准：不要编造商品编号、价格、库存或规则内容；"
-              "工具没查到的事实不要补充。")
+              "工具没查到的事实不要补充。若 image.isSimulation=true，必须明确说明"
+              "图片是未接入生图模型时的本地模拟预览，并非真人试穿或真实生成效果。")
     try:
         return get_llm().chat(system, json.dumps(context, ensure_ascii=False, default=str))
     except Exception as e:
@@ -406,6 +412,10 @@ async def assemble_node(state: AgentState) -> dict:
             text = _compose_activity_list(state)
         if text is None:
             text = _compose_mock(state) if (config.MOCK_AGENT or not config.LLM_API_KEY) else _compose_llm(state)
+        # 确定性补充降级声明，避免真实 LLM 汇总时遗漏或弱化模拟预览性质。
+        if any(result.get("data", {}).get("isSimulation")
+               for result in _get_results(state, "image")) and MOCK_TRYON_NOTICE not in text:
+            text = f"{text}\n\n> {MOCK_TRYON_NOTICE}"
         outfit = build_outfit(state)
         if outfit:
             events.append({"type": "outfit", "data": {"outfit": outfit}})
