@@ -55,6 +55,8 @@ coverage/
 !.env.sample
 !.env.template
 *.local
+# 本机私有启动配置（JAVA_HOME 等机器路径，start.ps1 启动时自动加载）
+/local-env.ps1
 
 # IDE and operating-system files
 .idea/
@@ -99,7 +101,7 @@ frontend/public/seed-images/
 .pnpm-cache/
 # 本地 reranker 模型权重（ModelScope 下载，较大）
 agent-python/.models/
-# uv 缓存与 Python 安装目录（D 盘本地）
+# uv 缓存与 Python 安装目录（start.ps1 注入，固定在仓库内）
 .uv-cache/
 .uv-python/
 # 旧 requirements.txt 已由 pyproject.toml + uv.lock 取代（见 agent-python/）

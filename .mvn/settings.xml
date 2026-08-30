@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
-  <!-- 本地仓库放在工作区内，规避全局 settings 指向的 D:\maven-local-repository 被沙箱拦截 -->
-  <localRepository>D:\agent\chaoyin-agent\.m2repo</localRepository>
+  <!-- 本地仓库路径由 start.ps1 通过 -Dmaven.repo.local 指向仓库内 .m2repo，此处只放镜像，避免写死机器路径 -->
   <mirrors>
     <mirror>
       <id>aliyun</id>

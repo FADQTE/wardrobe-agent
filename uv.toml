@@ -1,4 +1,3 @@
-# uv 全局配置：缓存与 Python 安装目录全部落在 D 盘（不写 C 盘）
-cache-dir = "D:\\ago\\agent\\.uv-cache"
-python-install-dir = "D:\\ago\\agent\\.uv-python"
+# uv 配置：缓存与 Python 安装目录由 start.ps1 通过 UV_CACHE_DIR / UV_PYTHON_INSTALL_DIR
+# 指向仓库内，不在此写死机器路径
 link-mode = "copy"

@@ -4,10 +4,14 @@
 
 $ErrorActionPreference = 'Continue'
 $root = $PSScriptRoot
-# uv 缓存与 Python 安装目录固定到 D 盘（不写 C 盘）
+# 加载本机私有配置（local-env.ps1 已被 .gitignore 排除，不会提交；用于 JAVA_HOME 等机器相关变量）
+if (Test-Path "$root\local-env.ps1") { . "$root\local-env.ps1" }
+# uv / pnpm 的缓存目录统一固定到仓库内（不污染系统目录，也不把机器路径写进仓库）
 $env:UV_CACHE_DIR = "$root\.uv-cache"
 $env:UV_PYTHON_INSTALL_DIR = "$root\.uv-python"
 $env:UV_LINK_MODE = 'copy'
+$env:npm_config_store_dir = "$root\.pnpm-store"
+$env:npm_config_cache_dir = "$root\.pnpm-cache"
 
 Write-Host '== 1/5 启动基础设施 (MySQL + Elasticsearch) ==' -ForegroundColor Cyan
 docker compose up -d
@@ -39,7 +43,12 @@ Write-Host '  检查种子数据（仅空库初始化，保留现有聊天与订
 & "$root\agent-python\.venv\Scripts\python.exe" "$root\scripts\seed.py" --if-empty
 
 Write-Host '== 4/5 启动后端服务 (Spring Boot :16545 / Agent :16546 / Netty WS :16547) ==' -ForegroundColor Cyan
-Start-Process powershell -ArgumentList '-NoExit','-Command',"`$env:JAVA_HOME='D:\jdk17'; Set-Location '$root\backend-java'; mvn -s '$root\.mvn\settings.xml' spring-boot:run"
+if ($env:JAVA_HOME) {
+    Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$root\backend-java'; mvn '-Dmaven.repo.local=$root\.m2repo' -s '$root\.mvn\settings.xml' spring-boot:run"
+} else {
+    Write-Host '  未检测到 JAVA_HOME，跳过 Spring Boot 后端。' -ForegroundColor Yellow
+    Write-Host '  修复：在项目根目录创建 local-env.ps1，写入 $env:JAVA_HOME = "本机JDK17路径"（该文件不会被提交），重新运行本脚本。' -ForegroundColor Yellow
+}
 Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$root\agent-python'; uv run uvicorn app.main:app --host 0.0.0.0 --port 16546"
 
 Write-Host '== 5/5 启动前端 (Vite :16548) ==' -ForegroundColor Cyan
