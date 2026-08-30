@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from . import config, rag
+from . import answer_cache
 from .es_client import get_es
 from .graph import build_graph
 from .mcp_client import get_mcp_tools
@@ -248,6 +249,46 @@ async def chat(req: ChatRequest, request: Request):
                 user_message=req.message,
             ).build()
 
+            # ---------- L2 公共答案缓存（跨用户共享，省 LLM token） ----------
+            # 读取门闸在 answer_cache 内部：个人词命中根本不查池；命中则跳过意图/工具/LLM。
+            _cached = None
+            if config.ANSWER_CACHE_ENABLED:
+                try:
+                    _es = get_es()
+                    _cached = answer_cache.lookup(
+                        req.message, embed_fn=_es.embed if _es else None,
+                        identity_hints=[user_hint for user_hint in (
+                            memory.state.get("persona") or "",) if user_hint])
+                except Exception:
+                    _cached = None
+            if _cached:
+                answer, cache_cat = _cached
+                await deliver({"type": "status", "data": {
+                    "text": f"命中公共答案缓存（{cache_cat}·跨用户共享·已过个人标识扫描），直接复用",
+                    "stage": "cache"}})
+                for i in range(0, len(answer), 8):
+                    async for sse_line in emit({"type": "token", "data": {"text": answer[i:i + 8]}}):
+                        yield sse_line
+                    await asyncio.sleep(0.015)
+                from .suggestions import build_followups
+                _fake_state = {"message": req.message,
+                               "intent_data": {"tasks": [{"id": "t1", "type": (
+                                   "rule_query" if cache_cat == "activity" else "rag")}]},
+                               "results": [], "safety_data": {}}
+                _followups = build_followups(_fake_state)
+                _meta = _history_meta(None, _followups)
+                _meta["fromCache"] = cache_cat
+                await memory.append_message("assistant", answer, _meta)
+                assistant_saved = True
+                await memory.save()
+                async for sse_line in emit({"type": "done", "data": {
+                        "reply": answer, "sessionId": req.session_id, "suggestions": _followups,
+                        "fromCache": True,
+                        "latencyMs": int((time.monotonic() - turn_started) * 1000)}}):
+                    yield sse_line
+                await trace.wait()
+                return
+
             graph = build_graph()
             inputs = {
                 "session_id": req.session_id, "user_id": req.user_id,
@@ -286,6 +327,17 @@ async def chat(req: ChatRequest, request: Request):
             # 追问建议：按本轮任务与结果派生，随 done 下发并存入消息 meta（历史恢复仍可见）
             from .suggestions import build_followups
             followups = build_followups(final_state or {})
+            # L2 写入闸门：纯全局知识轮次（活动/穿搭规则）且通过个人标识扫描才入公共池
+            if config.ANSWER_CACHE_ENABLED:
+                try:
+                    _es_store = get_es()
+                    answer_cache.maybe_store_turn(
+                        final_state or {}, text,
+                        embed_fn=_es_store.embed if _es_store else None,
+                        identity_hints=[hint for hint in (
+                            memory.state.get("persona") or "",) if hint])
+                except Exception:
+                    pass
             await memory.append_message("assistant", text, _history_meta(final_state, followups))
             assistant_saved = True
             for i in range(0, len(text), 8):
@@ -436,6 +488,8 @@ async def rules_reindex(req: ReindexRequest):
         if doc.get("publish_status") == "published":
             _deactivate_family(es, req.rule_id, doc.get("title", ""))
         rag.invalidate_cache()
+        # 规则变了，公共答案池（活动类）必须同步失效，否则跨用户复用的是旧活动
+        answer_cache.invalidate("activity")
         return {"code": 0, "msg": f"rule #{req.rule_id} 已增量更新索引，"
                 f"vector={vector_state}，缓存已失效"}
     except Exception as e:
@@ -461,6 +515,7 @@ async def rules_fullsync():
                 "query": {"bool": {"must_not": [{"ids": {"values": ids}}]}}
             }, conflicts="proceed", refresh=True)
         rag.invalidate_cache()
+        answer_cache.invalidate("activity")
         return {"code": 0, "msg": f"fullsync {len(rules)} rules, vector={vector_state}"}
     except Exception as e:
         return {"code": 500, "msg": f"fullsync 失败: {e}"}

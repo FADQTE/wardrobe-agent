@@ -65,3 +65,11 @@ TRYON_POLL_TIMEOUT = float(os.getenv("TRYON_POLL_TIMEOUT", "180"))
 PRODUCT_INDEX = "product_index"
 RULE_INDEX = "rule_index"
 MEMORY_INDEX = "memory_index"
+
+# ---------- 公共答案缓存（L2，跨用户共享；详见 answer_cache.py 模块头的隔离设计） ----------
+ANSWER_CACHE_ENABLED = os.getenv("ANSWER_CACHE_ENABLED", "true").lower() == "true"
+# 与 Java 私有会话缓存物理隔离：Java 用 DB0，公共池用 DB1
+ANSWER_CACHE_REDIS_URL = os.getenv("ANSWER_CACHE_REDIS_URL", "redis://127.0.0.1:16549/1")
+ANSWER_CACHE_SEMANTIC_THRESHOLD = float(os.getenv("ANSWER_CACHE_SEMANTIC_THRESHOLD", "0.80"))
+ANSWER_CACHE_ACTIVITY_TTL = int(os.getenv("ANSWER_CACHE_ACTIVITY_TTL", "300"))
+ANSWER_CACHE_RAG_TTL = int(os.getenv("ANSWER_CACHE_RAG_TTL", "21600"))

@@ -170,55 +170,6 @@ wheels = [
 ]
 
 [[package]]
-name = "wardrobe-agent"
-version = "0.2.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "cryptography" },
-    { name = "elasticsearch" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "langchain" },
-    { name = "langchain-core" },
-    { name = "langchain-mcp-adapters" },
-    { name = "langchain-openai" },
-    { name = "langgraph" },
-    { name = "modelscope" },
-    { name = "openai" },
-    { name = "pydantic" },
-    { name = "pymysql" },
-    { name = "python-dotenv" },
-    { name = "safetensors" },
-    { name = "sse-starlette" },
-    { name = "torch" },
-    { name = "transformers" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cryptography", specifier = "==50.0.1" },
-    { name = "elasticsearch", specifier = "==8.17.1" },
-    { name = "fastapi", specifier = "==0.115.12" },
-    { name = "httpx", specifier = "==0.28.1" },
-    { name = "langchain", specifier = "==0.3.20" },
-    { name = "langchain-core", specifier = "==0.3.41" },
-    { name = "langchain-mcp-adapters", specifier = "==0.1.7" },
-    { name = "langchain-openai", specifier = "==0.3.7" },
-    { name = "langgraph", specifier = "==0.2.74" },
-    { name = "modelscope", specifier = "==1.23.0" },
-    { name = "openai", specifier = "==1.68.2" },
-    { name = "pydantic", specifier = "==2.10.6" },
-    { name = "pymysql", specifier = "==1.1.1" },
-    { name = "python-dotenv", specifier = "==1.0.1" },
-    { name = "safetensors", specifier = "==0.4.5" },
-    { name = "sse-starlette", specifier = "==2.1.3" },
-    { name = "torch", specifier = "==2.5.1" },
-    { name = "transformers", specifier = "==4.51.3" },
-    { name = "uvicorn", specifier = "==0.34.0" },
-]
-
-[[package]]
 name = "charset-normalizer"
 version = "3.5.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -1876,6 +1827,18 @@ wheels = [
 ]
 
 [[package]]
+name = "redis"
+version = "5.2.1"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+dependencies = [
+    { name = "async-timeout", marker = "python_full_version < '3.11.3'" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/47/da/d283a37303a995cd36f8b92db85135153dc4f7a8e4441aa827721b442cfb/redis-5.2.1.tar.gz", hash = "sha256:16f2e22dff21d5125e8481515e386711a34cbec50f0e44413dd7d9c060a54e0f" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/3c/5f/fa26b9b2672cbe30e07d9a5bdf39cf16e3b80b42916757c5f92bca88e4ba/redis-5.2.1-py3-none-any.whl", hash = "sha256:ee7e1056b9aea0f04c6c2ed59452947f34c4940ee025f5dd83e6a6418b6989e4" },
+]
+
+[[package]]
 name = "referencing"
 version = "0.37.0"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -2693,6 +2656,57 @@ dependencies = [
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/4b/4d/938bd85e5bf2edeec766267a5015ad969730bb91e31b44021dfe8b22df6c/uvicorn-0.34.0.tar.gz", hash = "sha256:404051050cd7e905de2c9a7e61790943440b3416f49cb409f965d9dcd0fa73e9" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/61/14/33a3a1352cfa71812a3a21e8c9bfb83f60b0011f5e36f2b1399d51928209/uvicorn-0.34.0-py3-none-any.whl", hash = "sha256:023dc038422502fa28a09c7a30bf2b6991512da7dcdb8fd35fe57cfc154126f4" },
+]
+
+[[package]]
+name = "wardrobe-agent"
+version = "0.2.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "cryptography" },
+    { name = "elasticsearch" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "langchain" },
+    { name = "langchain-core" },
+    { name = "langchain-mcp-adapters" },
+    { name = "langchain-openai" },
+    { name = "langgraph" },
+    { name = "modelscope" },
+    { name = "openai" },
+    { name = "pydantic" },
+    { name = "pymysql" },
+    { name = "python-dotenv" },
+    { name = "redis" },
+    { name = "safetensors" },
+    { name = "sse-starlette" },
+    { name = "torch" },
+    { name = "transformers" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = "==50.0.1" },
+    { name = "elasticsearch", specifier = "==8.17.1" },
+    { name = "fastapi", specifier = "==0.115.12" },
+    { name = "httpx", specifier = "==0.28.1" },
+    { name = "langchain", specifier = "==0.3.20" },
+    { name = "langchain-core", specifier = "==0.3.41" },
+    { name = "langchain-mcp-adapters", specifier = "==0.1.7" },
+    { name = "langchain-openai", specifier = "==0.3.7" },
+    { name = "langgraph", specifier = "==0.2.74" },
+    { name = "modelscope", specifier = "==1.23.0" },
+    { name = "openai", specifier = "==1.68.2" },
+    { name = "pydantic", specifier = "==2.10.6" },
+    { name = "pymysql", specifier = "==1.1.1" },
+    { name = "python-dotenv", specifier = "==1.0.1" },
+    { name = "redis", specifier = "==5.2.1" },
+    { name = "safetensors", specifier = "==0.4.5" },
+    { name = "sse-starlette", specifier = "==2.1.3" },
+    { name = "torch", specifier = "==2.5.1" },
+    { name = "transformers", specifier = "==4.51.3" },
+    { name = "uvicorn", specifier = "==0.34.0" },
 ]
 
 [[package]]

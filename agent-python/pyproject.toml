@@ -15,6 +15,8 @@ dependencies = [
     "elasticsearch==8.17.1",
     # 种子数据写入 MySQL
     "pymysql==1.1.1",
+    # 公共答案缓存（Redis DB1；与 Java 私有缓存 DB0 物理隔离）
+    "redis==5.2.1",
     "cryptography==50.0.1",
     # Embedding API（EMBEDDING_MODE=api 时）
     "openai==1.68.2",
