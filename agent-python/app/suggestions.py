@@ -72,7 +72,21 @@ def build_followups(final_state: dict) -> list[str]:
     if "logistics" in types:
         out += ["申请退款要怎么操作", "查我的其他订单"]
     if "aftersale" in types:
+        apply_result = next((r for r in results if r.get("type") == "aftersale"), None)
+        apply_data = (apply_result or {}).get("data") or {}
+        if apply_data.get("needsOrderNo"):
+            nos = [o.get("orderNo") for o in apply_data.get("orders", [])[:3] if o.get("orderNo")]
+            return nos or ["帮我查一下我的订单"]
+        if apply_data.get("action") == "apply":
+            return ["售后单审核到哪一步了",
+                    "符合什么条件可以自动退款",
+                    "帮我重新挑一件替代"]
         out += ["售后进度到哪里了", "帮我重新挑一件替代"]
+    if "cart" in types:
+        cart_result = next((r for r in results if r.get("type") == "cart"), None)
+        if ((cart_result or {}).get("data") or {}).get("action") == "list":
+            return ["帮我把购物车里的商品下单", "继续挑一件搭配的外套"]
+        out += ["看下我的购物车", "帮我直接下单购物车里的商品"]
 
     out += [d for d in DEFAULT_FOLLOWUPS if not _similar(d, message)]
     seen: set[str] = set()

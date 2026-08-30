@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -73,7 +74,80 @@ public class AfterSaleService {
         afterSale.setReason(StringUtils.hasText(reason) ? reason.trim() : "用户从商城订单页申请");
         afterSale.setAmount(order.getTotalAmount());
         afterSaleMapper.insert(afterSale);
+        // 自动审核引擎：符合规则的自动通过（模型可退），不符合的转人工处理
+        autoReview(afterSale, order);
+        afterSaleMapper.updateById(afterSale);
         return afterSaleMapper.selectById(afterSale.getId());
+    }
+
+    /** 自动退款上限：小额订单才允许规则自动通过，大额一律人工。 */
+    public static final BigDecimal AUTO_REFUND_LIMIT = new BigDecimal("1000");
+
+    /**
+     * 自动审核规则（可解释、可追问）：
+     * 通过 = 退款类型与订单状态匹配（paid→仅退款 / shipped·done→退货退款）且金额 ≤ 上限；
+     * 其余（类型不匹配、超额）保持 pending 转人工，并记录原因供人工客服页面展示。
+     */
+    private void autoReview(AfterSale sale, MallOrder order) {
+        String expectedType = switch (order.getStatus()) {
+            case OrderService.PAID -> "refund";
+            case OrderService.SHIPPED, OrderService.DONE -> "return_refund";
+            default -> "";
+        };
+        boolean typeMatches = expectedType.equals(sale.getType());
+        boolean withinLimit = sale.getAmount() != null
+                && sale.getAmount().compareTo(AUTO_REFUND_LIMIT) <= 0;
+        if (typeMatches && withinLimit) {
+            sale.setStatus(APPROVED);
+            sale.setReviewSource("auto");
+            sale.setReviewReason("符合自动退款规则：类型与订单状态匹配，金额 ¥"
+                    + sale.getAmount() + " ≤ 上限 ¥" + AUTO_REFUND_LIMIT + "，系统自动通过");
+        } else {
+            sale.setReviewSource("manual");
+            String why = typeMatches
+                    ? "金额 ¥" + sale.getAmount() + " 超过自动退款上限 ¥" + AUTO_REFUND_LIMIT
+                    : "退款类型与订单状态不匹配（" + order.getStatus() + " 订单应选择 "
+                      + (expectedType.isEmpty() ? "人工核实的类型" : expectedType) + "）";
+            sale.setReviewReason(why + "，转人工审核");
+        }
+    }
+
+    /** 人工客服：待审核列表（最新优先）。 */
+    public List<AfterSale> listByStatus(String status) {
+        QueryWrapper<AfterSale> query = new QueryWrapper<AfterSale>().orderByDesc("id");
+        if (StringUtils.hasText(status)) {
+            query.eq("status", status);
+        }
+        return afterSaleMapper.selectList(query);
+    }
+
+    /** 人工客服：通过（仅 pending 可操作），记录人工结论。 */
+    public AfterSale approve(Long id, String reason) {
+        AfterSale sale = requirePending(id);
+        sale.setStatus(APPROVED);
+        sale.setReviewSource("manual");
+        sale.setReviewReason("人工审核通过" + (StringUtils.hasText(reason) ? "：" + reason.trim() : ""));
+        afterSaleMapper.updateById(sale);
+        return sale;
+    }
+
+    /** 人工客服：驳回（仅 pending 可操作）。 */
+    public AfterSale reject(Long id, String reason) {
+        AfterSale sale = requirePending(id);
+        sale.setStatus(REJECTED);
+        sale.setReviewSource("manual");
+        sale.setReviewReason("人工审核驳回" + (StringUtils.hasText(reason) ? "：" + reason.trim() : ""));
+        afterSaleMapper.updateById(sale);
+        return sale;
+    }
+
+    private AfterSale requirePending(Long id) {
+        AfterSale sale = afterSaleMapper.selectById(id);
+        if (sale == null) throw new BizException(404, "售后单不存在");
+        if (!PENDING.equals(sale.getStatus())) {
+            throw new BizException(409, "该售后单已处理（" + sale.getStatus() + "），不能重复操作");
+        }
+        return sale;
     }
 
     public List<AfterSale> listByUser(Long userId) {

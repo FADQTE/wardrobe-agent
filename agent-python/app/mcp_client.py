@@ -111,6 +111,22 @@ async def _rest_fallback(name: str, args: dict):
         return await _api("GET", "/after-sales/policy")
     if name == "listAfterSales":
         return await _api("GET", "/after-sales", params={"userId": user_id})
+    if name == "applyAfterSale":
+        orders = await _api("GET", "/orders", params={"userId": user_id})
+        order = next((row for row in orders if row.get("orderNo") == args.get("orderNo")), None)
+        if not order:
+            raise RuntimeError(f"订单不存在或无权访问: {args.get('orderNo')}")
+        return await _api("POST", "/after-sales", json={
+            "userId": user_id, "orderId": order.get("id"),
+            "type": args.get("type") or "return_refund",
+        })
+    if name == "addToCart":
+        return await _api("POST", "/cart", params={"userId": user_id}, json={
+            "productId": args.get("productId"),
+            "quantity": args.get("quantity") or 1,
+        })
+    if name == "listCart":
+        return await _api("GET", "/cart", params={"userId": user_id})
     raise RuntimeError(f"MCP 工具 {name} 没有 REST 降级映射")
 
 

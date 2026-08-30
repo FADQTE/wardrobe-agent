@@ -4,6 +4,7 @@ import com.chaoyin.entity.MallOrder;
 import com.chaoyin.entity.Product;
 import com.chaoyin.entity.WardrobeItem;
 import com.chaoyin.mapper.FavoriteMapper;
+import com.chaoyin.service.CartService;
 import com.chaoyin.service.OrderService;
 import com.chaoyin.service.ProductService;
 import com.chaoyin.service.WardrobeService;
@@ -30,6 +31,7 @@ public class MallTools {
     private final ProductService productService;
     private final OrderService orderService;
     private final AfterSaleService afterSaleService;
+    private final CartService cartService;
     private final FavoriteMapper favoriteMapper;
 
     public record ProductPage(List<Product> products, long total) {
@@ -128,5 +130,34 @@ public class MallTools {
     public List<com.chaoyin.entity.AfterSale> listAfterSales(
             @ToolParam(description = "用户ID") long userId) {
         return afterSaleService.listByUser(userId);
+    }
+
+    @Tool(description = "为当前用户的指定订单创建售后申请（退货退款/仅退款）。只创建申请进入人工审核，"
+            + "不会直接退款；type 按订单状态选 refund(未发货)或 return_refund(已发货/已完成)")
+    public com.chaoyin.entity.AfterSale applyAfterSale(
+            @ToolParam(description = "用户ID") long userId,
+            @ToolParam(description = "订单号，如 CY202608150001") String orderNo,
+            @ToolParam(description = "类型: refund 仅退款 | return_refund 退货退款 | exchange 换货") String type) {
+        MallOrder order = orderService.findByNoForUser(orderNo, userId);
+        return afterSaleService.apply(userId, order.getId(), type, "AI 客服代提交");
+    }
+
+    @Tool(description = "把商品加入用户购物车（同商品数量累加，校验在售与库存）")
+    public String addToCart(@ToolParam(description = "用户ID") long userId,
+                            @ToolParam(description = "商品ID") long productId,
+                            @ToolParam(description = "数量，默认1") int quantity) {
+        var line = cartService.add(userId, productId, quantity <= 0 ? 1 : quantity);
+        return "已把「" + line.product().getName() + "」×" + line.quantity() + "加入购物车";
+    }
+
+    @Tool(description = "查询用户购物车列表（商品名/单价/数量/小计）")
+    public List<CartLineInfo> listCart(@ToolParam(description = "用户ID") long userId) {
+        return cartService.list(userId).stream()
+                .map(line -> new CartLineInfo(line.productId(), line.product().getName(),
+                        line.product().getPrice(), line.quantity()))
+                .toList();
+    }
+
+    public record CartLineInfo(long productId, String name, java.math.BigDecimal price, int quantity) {
     }
 }

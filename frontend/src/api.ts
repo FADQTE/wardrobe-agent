@@ -285,3 +285,76 @@ export const runEval = () =>
   fetch('/agent/eval/run', { method: 'POST' }).then((r) => r.json())
 
 export const getAgentHealth = () => fetch('/agent/health').then((r) => r.json())
+
+// ---- 购物车（后端落库：商城页与 AI 对话操作同一份数据） ----
+export interface CartLine {
+  id: number
+  productId: number
+  quantity: number
+  product: Product
+}
+
+export const getCart = (userId: number) => api<CartLine[]>(`/api/cart?userId=${userId}`)
+
+export const addToCartApi = (userId: number, productId: number, quantity = 1) =>
+  api<CartLine>(`/api/cart?userId=${userId}`, {
+    method: 'POST',
+    body: JSON.stringify({ productId, quantity }),
+  })
+
+export const updateCartLine = (userId: number, id: number, quantity: number) =>
+  api<void>(`/api/cart/${id}?userId=${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ quantity }),
+  })
+
+export const removeCartLine = (userId: number, id: number) =>
+  api<void>(`/api/cart/${id}?userId=${userId}`, { method: 'DELETE' })
+
+// ---- 人工客服工作台（管理密钥鉴权） ----
+export const ADMIN_KEY_STORE = 'app_admin_key'
+export const getAdminKey = () => localStorage.getItem(ADMIN_KEY_STORE) || ''
+export const saveAdminKey = (key: string) => localStorage.setItem(ADMIN_KEY_STORE, key)
+
+async function adminApi<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Api-Key': getAdminKey(),
+      ...(options.headers ?? {}),
+    },
+  })
+  const body = await res.json().catch(() => null)
+  if (!res.ok || body?.code !== 0) throw new Error(body?.msg || `HTTP ${res.status}`)
+  return body.data as T
+}
+
+export interface AfterSaleRecord {
+  id: number
+  requestNo: string
+  orderId: number
+  userId: number
+  type: string
+  status: string
+  reason?: string
+  amount: number
+  reviewSource?: 'auto' | 'manual' | null
+  reviewReason?: string
+  createdAt: string
+}
+
+export interface AfterSaleRow {
+  sale: AfterSaleRecord
+  order: Order | null
+}
+
+export const adminListAfterSales = (status: string) =>
+  adminApi<AfterSaleRow[]>(`/admin/aftersales?status=${encodeURIComponent(status)}`)
+
+export const adminReviewAfterSale = (
+  id: number, action: 'approve' | 'reject', reason: string,
+) => adminApi<AfterSaleRecord>(`/admin/aftersales/${id}/${action}`, {
+  method: 'POST',
+  body: JSON.stringify({ reason }),
+})

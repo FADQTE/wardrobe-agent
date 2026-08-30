@@ -8,6 +8,7 @@ import {
   RobotOutlined,
   ScheduleOutlined,
   SkinOutlined,
+  TeamOutlined,
   LogoutOutlined,
   UserOutlined,
 } from '@ant-design/icons'
@@ -16,6 +17,7 @@ import MallPage from './pages/MallPage'
 import ChatPage from './pages/ChatPage'
 import RulesPage from './pages/RulesPage'
 import ObservePage from './pages/ObservePage'
+import AdminPage from './pages/AdminPage'
 import { createContext, useContext, useEffect, useState } from 'react'
 import { clearAccessToken, getAccessToken, getCurrentUser, LoginResult, logout, User } from './api'
 import LoginPage from './pages/LoginPage'
@@ -31,6 +33,7 @@ const menuItems = [
   { key: '/mall', icon: <AppstoreOutlined />, label: '服饰商城' },
   { key: '/rules', icon: <ScheduleOutlined />, label: '规则管理' },
   { key: '/observe', icon: <DashboardOutlined />, label: '可观测' },
+  { key: '/admin', icon: <TeamOutlined />, label: '人工客服' },
 ]
 
 export default function App() {
@@ -143,6 +146,7 @@ export default function App() {
                   <Route path="/mall" element={<MallPage />} />
                   <Route path="/rules" element={<RulesPage />} />
                   <Route path="/observe" element={<ObservePage />} />
+                  <Route path="/admin" element={<AdminPage />} />
                 </Routes>
               </div>
             </Content>

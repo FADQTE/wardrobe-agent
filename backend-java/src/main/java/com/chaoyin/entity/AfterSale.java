@@ -22,6 +22,10 @@ public class AfterSale {
     private String status;
     private String reason;
     private BigDecimal amount;
+    /** auto=规则自动审核 | manual=人工审核 | null=未判定 */
+    private String reviewSource;
+    /** 审核判定说明（为什么自动通过/为什么转人工/人工结论） */
+    private String reviewReason;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

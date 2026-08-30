@@ -546,10 +546,62 @@ async def do_logistics(task, state, memory, ctx) -> dict:
                 "data": {}, "error_category": err_cat, "events": events}
 
 
+async def _after_sale_apply(task, ctx, events) -> dict:
+    """创建售后申请：定位订单 → 按状态选类型 → 提交 → 产物验证（回查申请单必须存在）。
+
+    安全边界：AI 只创建申请并触发规则自动审核，不直接操作资金；
+    产物验证失败视为未生效，走转人工，绝不对用户谎报"已退款"。
+    """
+    params = task.get("params", {})
+    order_no = (params.get("orderNo") or "").strip()
+    if not order_no:
+        # 不替用户猜订单：列出最近订单让用户点名
+        raw = await call_tool("listOrders", {"userId": ctx["user_id"]})
+        orders = json.loads(raw) if isinstance(raw, str) else (raw or [])
+        events.append(_tool_event("listOrders", {}, True, f"查到 {len(orders)} 笔订单，待用户指定"))
+        return {"task_id": task["id"], "type": "aftersale", "ok": True,
+                "data": {"action": "apply", "needsOrderNo": True, "orders": orders[:3]},
+                "events": events}
+    order_raw = await call_tool("queryOrder", {"userId": ctx["user_id"], "orderNo": order_no})
+    order = json.loads(order_raw) if isinstance(order_raw, str) else order_raw
+    sale_type = "refund" if order.get("status") == "paid" else "return_refund"
+    raw = await call_tool("applyAfterSale", {
+        "userId": ctx["user_id"], "orderNo": order_no, "type": sale_type})
+    applied = json.loads(raw) if isinstance(raw, str) else raw
+    request_no = (applied or {}).get("requestNo") or ""
+    # 产物验证：回查售后记录，确认申请单真实存在
+    records_raw = await call_tool("listAfterSales", {"userId": ctx["user_id"]})
+    records = json.loads(records_raw) if isinstance(records_raw, str) else (records_raw or [])
+    verified = any(r.get("requestNo") == request_no for r in records)
+    if not request_no or not verified:
+        raise RuntimeError(f"售后申请 {request_no or '(空单号)'} 创建后回查未找到，可能未生效")
+    events.append(_tool_event("applyAfterSale", {"orderNo": order_no, "type": sale_type}, True,
+                              f"售后单 {request_no} 创建成功且回查验证通过"
+                              f"（审核：{applied.get('status')}，{applied.get('reviewReason', '')}）"))
+    return {"task_id": task["id"], "type": "aftersale", "ok": True,
+            "data": {"action": "apply", "orderNo": order_no, "type": sale_type,
+                     "requestNo": request_no, "status": applied.get("status"),
+                     "reviewSource": applied.get("reviewSource"),
+                     "reviewReason": applied.get("reviewReason"),
+                     "amount": applied.get("amount"), "verified": True},
+            "events": events}
+
+
 async def do_aftersale(task, state, memory, ctx) -> dict:
     params = task.get("params", {})
     action = params.get("action") or "policy"
-    events = [_status_event("查询售后政策与申请状态（MCP）…", "aftersale")]
+    events = [_status_event(
+        "创建售后申请（提交后自动审核，不直接操作资金）…" if action == "apply"
+        else "查询售后政策与申请状态（MCP）…", "aftersale")]
+    if action == "apply":
+        try:
+            return await _after_sale_apply(task, ctx, events)
+        except Exception as e:
+            err_cat = classify_error(e)
+            events.append(_tool_event("applyAfterSale", params, False, str(e)[:120],
+                                      error_category=err_cat))
+            return {"task_id": task["id"], "type": "aftersale", "ok": False,
+                    "data": {"action": "apply"}, "error_category": err_cat, "events": events}
     tool = "listAfterSales" if action == "query" else "getAfterSalePolicy"
     args = {"userId": ctx["user_id"]} if action == "query" else {}
     try:
@@ -572,6 +624,77 @@ async def do_aftersale(task, state, memory, ctx) -> dict:
                 "data": {"action": action}, "error_category": err_cat, "events": events}
 
 
+async def do_cart(task, state, memory, ctx) -> dict:
+    """购物车操作：加购（依赖 product 任务定位商品）/ 查看列表。加购后回查验证。"""
+    params = task.get("params", {})
+    action = params.get("action") or "add"
+    events = [_status_event("购物车操作（MCP，加购后回查验证）…", "cart")]
+    try:
+        if action == "list":
+            raw = await call_tool("listCart", {"userId": ctx["user_id"]})
+            rows = json.loads(raw) if isinstance(raw, str) else (raw or [])
+            # MCP 返回扁平 CartLineInfo；REST 降级返回 {item, product} 嵌套 → 统一成扁平
+            items = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                product, item = row.get("product") or {}, row.get("item") or {}
+                items.append({
+                    "productId": product.get("id") or item.get("productId") or row.get("productId"),
+                    "name": product.get("name") or row.get("name"),
+                    "price": product.get("price") or row.get("price"),
+                    "quantity": item.get("quantity", row.get("quantity", 1)),
+                })
+            events.append(_tool_event("listCart", {}, True, f"购物车共 {len(items)} 种商品"))
+            return {"task_id": task["id"], "type": "cart", "ok": True,
+                    "data": {"action": "list", "items": items}, "events": events}
+        ids = [pid for pid in (params.get("productIds") or []) if pid]
+        if not ids:
+            # 只加最匹配的一件：检索 Top1；其余候选由追问建议引导用户挑选
+            ids = [p["id"] for p in _products_from_results(state)][:1]
+        if not ids:
+            events.append(_tool_event("addToCart", params, False, "未定位到商品，请先检索商城商品",
+                                      error_category="not_found"))
+            return {"task_id": task["id"], "type": "cart", "ok": False,
+                    "data": {"action": "add"}, "error_category": "not_found", "events": events}
+        quantity = int(params.get("quantity") or 1)
+        for pid in ids:
+            await call_tool("addToCart", {"userId": ctx["user_id"], "productId": pid,
+                                          "quantity": quantity})
+        # 产物验证：回查购物车，确认商品与数量真实存在
+        raw = await call_tool("listCart", {"userId": ctx["user_id"]})
+        cart_rows = json.loads(raw) if isinstance(raw, str) else (raw or [])
+        by_product = {}
+        for row in cart_rows:
+            if not isinstance(row, dict):
+                continue
+            # MCP listCart 为扁平 {productId, name, price, quantity}；REST 降级为嵌套
+            product, item = row.get("product") or {}, row.get("item") or {}
+            pid = row.get("productId") or product.get("id") or item.get("productId")
+            if pid is not None:
+                by_product[int(pid)] = row.get("quantity") or item.get("quantity", 1)
+        verified_ids = [pid for pid in ids if int(pid) in by_product]
+        if len(verified_ids) != len(ids):
+            raise RuntimeError("加购后回查购物车未找到商品，加购可能未生效")
+        products = _products_from_results(state)
+        names = [p.get("name") or f"#{p['id']}" for p in products if p.get("id") in verified_ids]
+        detail = "、".join(
+            f"{name}×{by_product[int(pid)]}" for name, pid in zip(names, verified_ids)) or             "、".join(f"#{pid}×{by_product[int(pid)]}" for pid in verified_ids)
+        events.append(_tool_event("addToCart", {"productIds": verified_ids}, True,
+                                  f"已加购并回查验证：{detail}"))
+        return {"task_id": task["id"], "type": "cart", "ok": True,
+                "data": {"action": "add", "productIds": verified_ids,
+                         "quantities": [by_product[int(pid)] for pid in verified_ids],
+                         "names": names, "verified": True},
+                "events": events}
+    except Exception as e:
+        err_cat = classify_error(e)
+        events.append(_tool_event("addToCart", params, False, str(e)[:120],
+                                  error_category=err_cat))
+        return {"task_id": task["id"], "type": "cart", "ok": False,
+                "data": {"action": action}, "error_category": err_cat, "events": events}
+
+
 async def execute_task(task: dict, results: list, memory, ctx: dict) -> dict:
     """执行单个任务（幂等：已完成则跳过）。state 即已完成结果列表。"""
     done = [r["task_id"] for r in results]
@@ -584,6 +707,8 @@ async def execute_task(task: dict, results: list, memory, ctx: dict) -> dict:
         return await do_rag(task, results, memory)
     if t == "rule_query":
         return await do_rag(task, results, memory, rule_type="activity")
+    if t == "cart":
+        return await do_cart(task, results, memory, ctx)
     if t == "product":
         return await do_product(task, results, memory)
     if t == "image":

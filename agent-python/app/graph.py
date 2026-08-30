@@ -289,6 +289,26 @@ ORDER_STATUS_CN = {
 
 def _compose_commerce_support(state: AgentState) -> str | None:
     """订单、物流和售后走确定性回答，避免模型篡改状态或误说“已退款”。"""
+    cart_results = _get_results(state, "cart")
+    if cart_results:
+        data = cart_results[0]["data"]
+        if data.get("action") == "add":
+            names = data.get("names") or []
+            quantities = data.get("quantities") or []
+            listing = "、".join(f"「{n}」×{q}" for n, q in zip(names, quantities)) or "商品"
+            return (f"已把 {listing} 加入购物车（已回查验证生效）。\n\n"
+                    "可到 **商城 → 购物车** 查看并创建订单；需要继续挑搭配随时说。")
+        items = data.get("items", [])
+        if not items:
+            return "购物车还是空的。想买什么告诉我，我帮你挑并直接加进去。"
+        lines = ["你的购物车（已回查验证）：", ""]
+        for row in items:
+            lines.append(f"- {row.get('name') or ('#' + str(row.get('productId')))}"
+                         f"：¥{row.get('price')} × {row.get('quantity')}")
+        lines.append("")
+        lines.append("告诉我「下单」我可以直接创建订单，或继续加购。")
+        return "\n".join(lines)
+
     order_results = _get_results(state, "order_query")
     if order_results:
         orders = order_results[0]["data"].get("orders", [])
@@ -321,6 +341,30 @@ def _compose_commerce_support(state: AgentState) -> str | None:
     aftersale_results = _get_results(state, "aftersale")
     if aftersale_results:
         data = aftersale_results[0]["data"]
+        if data.get("action") == "apply":
+            if data.get("needsOrderNo"):
+                orders = data.get("orders", [])
+                if not orders:
+                    return "没有找到可申请售后的订单。"
+                lines = ["要为哪笔订单申请售后？直接回复订单号即可：", ""]
+                for o in orders:
+                    status = ORDER_STATUS_CN.get(o.get("status"), o.get("status") or "未知")
+                    lines.append(f"- `{o.get('orderNo')}`：¥{o.get('totalAmount')}，{status}")
+                lines.append("")
+                lines.append("> 创建后进入自动审核：符合规则（类型与订单状态匹配且金额 ≤ ¥1000）"
+                             "的会自动通过，其余转人工。AI 不会直接操作资金。")
+                return "\n".join(lines)
+            if data.get("verified"):
+                status_cn = {"approved": "已自动通过审核", "rejected": "已驳回"}.get(
+                    data.get("status"), "待人工审核")
+                type_cn = "退货退款" if data.get("type") == "return_refund" else "仅退款"
+                return (
+                    f"已为订单 `{data.get('orderNo')}` 创建售后申请，单号 `{data.get('requestNo')}`"
+                    f"（已回查验证生效）：\n\n"
+                    f"- 类型：{type_cn}\n"
+                    f"- 审核结果：**{status_cn}**\n"
+                    f"- 判定说明：{data.get('reviewReason')}\n\n"
+                    "> 退款按审核结果原路退回；AI 不会直接操作真实资金。处理进度随时可以问我。")
         if data.get("action") == "query":
             records = data.get("records", [])
             if not records:
@@ -328,9 +372,10 @@ def _compose_commerce_support(state: AgentState) -> str | None:
             status_cn = {"pending": "待审核", "approved": "已通过", "rejected": "已拒绝", "completed": "已完成"}
             lines = [f"查到 **{len(records)} 条售后记录**（最新在前）：", ""]
             for row in records[:5]:
+                extra = f"（{row.get('reviewReason')}）" if row.get('reviewReason') else ""
                 lines.append(
                     f"- `{row.get('requestNo')}`：订单 #{row.get('orderId')}，"
-                    f"{status_cn.get(row.get('status'), row.get('status'))}，金额 ¥{row.get('amount')}"
+                    f"{status_cn.get(row.get('status'), row.get('status'))}，金额 ¥{row.get('amount')}{extra}"
                 )
             return "\n".join(lines)
 
@@ -426,7 +471,7 @@ def _compose_llm(state: AgentState) -> str:
                             "isSimulation": r["data"].get("isSimulation")})
         elif r.get("type") == "favorite" and r.get("ok"):
             results.append({"type": "favorite", "count": len(r["data"].get("ids", []))})
-        elif r.get("type") in ("order_query", "logistics", "aftersale") and r.get("ok"):
+        elif r.get("type") in ("order_query", "logistics", "aftersale", "cart") and r.get("ok"):
             results.append({"type": r.get("type"), "data": r.get("data")})
     context = {
         "用户消息": state["message"],

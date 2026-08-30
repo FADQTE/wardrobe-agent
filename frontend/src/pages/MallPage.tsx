@@ -10,9 +10,10 @@ import {
 import { useUser } from '../App'
 import PageHeader from '../components/PageHeader'
 import {
-  AfterSale, Order, OrderDetail, Product, addFavorite, applyAfterSale, cancelOrder,
-  createOrder, esSearchProducts, getOrderDetail, listFavorites, listOrders, payOrder,
-  removeFavorite, searchProducts,
+  AfterSale, CartLine as BackendCartLine, Order, OrderDetail, Product, addFavorite,
+  addToCartApi, applyAfterSale, cancelOrder, createOrder, esSearchProducts, getCart,
+  getOrderDetail, listFavorites, listOrders, payOrder, removeCartLine, removeFavorite,
+  searchProducts, updateCartLine,
 } from '../api'
 
 const CATEGORY_OPTIONS = [
@@ -44,7 +45,7 @@ const AFTER_SALE_STATUS: Record<string, { text: string; color: string }> = {
   completed: { text: '售后完成', color: 'default' },
 }
 
-interface CartLine { product: Product; quantity: number }
+interface CartLine { id?: number; product: Product; quantity: number }
 
 export default function MallPage() {
   const { user } = useUser()
@@ -64,9 +65,7 @@ export default function MallPage() {
   const [cartOpen, setCartOpen] = useState(false)
   const [cart, setCart] = useState<CartLine[]>([])
   const [submitting, setSubmitting] = useState(false)
-  const cartLoaded = useRef(false)
 
-  const cartKey = `app_cart_${user?.id ?? 'guest'}`
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0)
   const cartTotal = useMemo(
     () => cart.reduce((sum, line) => sum + Number(line.product.price) * line.quantity, 0),
@@ -97,19 +96,18 @@ export default function MallPage() {
 
   useEffect(() => { void doSearch(1, '', {}) }, [])
 
-  useEffect(() => {
-    cartLoaded.current = false
+  // 购物车走后端：商城页与 AI 加购共享同一份数据
+  const refreshCart = async () => {
+    if (!user) return
     try {
-      setCart(JSON.parse(localStorage.getItem(cartKey) || '[]'))
-    } catch {
-      setCart([])
-    }
-    cartLoaded.current = true
-  }, [cartKey])
+      const lines: BackendCartLine[] = await getCart(user.id)
+      setCart(lines.map((line) => ({
+        id: line.id, product: line.product, quantity: line.quantity,
+      })))
+    } catch { /* 后端未启动 */ }
+  }
 
-  useEffect(() => {
-    if (cartLoaded.current) localStorage.setItem(cartKey, JSON.stringify(cart))
-  }, [cart, cartKey])
+  useEffect(() => { void refreshCart() }, [user?.id])
 
   const searchNow = (value = keyword) => {
     setKeyword(value)
@@ -117,32 +115,34 @@ export default function MallPage() {
     void doSearch(1, value, filters)
   }
 
-  const addCart = (product: Product, quantity = 1) => {
+  const addCart = async (product: Product, quantity = 1) => {
+    if (!user) return
     if (product.stock < 1) {
       message.warning(`「${product.name}」暂时无货`)
       return
     }
     const safeQuantity = Math.max(1, Math.min(quantity, product.stock))
-    setCart((current) => {
-      const found = current.find((line) => line.product.id === product.id)
-      if (found) {
-        return current.map((line) => line.product.id === product.id
-          ? { ...line, quantity: Math.min(line.quantity + safeQuantity, product.stock) }
-          : line)
-      }
-      return [...current, { product, quantity: safeQuantity }]
-    })
-    message.success(`已将「${product.name}」加入购物车`)
+    try {
+      await addToCartApi(user.id, product.id, safeQuantity)
+      await refreshCart()
+      message.success(`已将「${product.name}」加入购物车`)
+    } catch (e: any) {
+      message.error(e.message || '加购失败')
+    }
   }
 
-  const updateQuantity = (productId: number, quantity: number | null) => {
-    if (!quantity || quantity < 1) {
-      setCart((current) => current.filter((line) => line.product.id !== productId))
-      return
+  const updateQuantity = async (lineId: number | undefined, quantity: number | null) => {
+    if (!user || lineId == null) return
+    try {
+      if (!quantity || quantity < 1) {
+        await removeCartLine(user.id, lineId)
+      } else {
+        await updateCartLine(user.id, lineId, quantity)
+      }
+      await refreshCart()
+    } catch (e: any) {
+      message.error(e.message || '购物车更新失败')
     }
-    setCart((current) => current.map((line) => line.product.id === productId
-      ? { ...line, quantity: Math.min(quantity, line.product.stock || quantity) }
-      : line))
   }
 
   const createPendingOrder = async (lines: CartLine[]) => {
@@ -152,8 +152,10 @@ export default function MallPage() {
       const order = await createOrder(user.id, lines.map((line) => ({
         productId: line.product.id, quantity: line.quantity,
       })))
-      const purchased = new Set(lines.map((line) => line.product.id))
-      setCart((current) => current.filter((line) => !purchased.has(line.product.id)))
+      for (const line of lines) {
+        if (line.id != null) await removeCartLine(user.id, line.id).catch(() => undefined)
+      }
+      await refreshCart()
       setCartOpen(false)
       message.success(`订单 ${order.orderNo} 已创建，请在“我的订单”中确认支付`)
       await loadOrders()
@@ -329,7 +331,7 @@ export default function MallPage() {
                     <Tooltip title="收藏"><Button size="small" icon={<HeartOutlined />} onClick={() => void fav(product)} /></Tooltip>
                     <Button size="small" icon={<ExperimentOutlined />} onClick={() => tryOn(product)}>试穿</Button>
                     <Button size="small" type="primary" icon={<ShoppingCartOutlined />} disabled={product.stock < 1}
-                      onClick={() => addCart(product)}>加购</Button>
+                      onClick={() => void addCart(product)}>加购</Button>
                   </Space>
                 </Card>
               </Col>
@@ -361,7 +363,7 @@ export default function MallPage() {
           </p>
           <Space wrap>
             <Button type="primary" icon={<ShoppingCartOutlined />} disabled={detail.stock < 1}
-              onClick={() => addCart(detail)}>加入购物车</Button>
+              onClick={() => void addCart(detail)}>加入购物车</Button>
             <Button onClick={() => void createPendingOrder([{ product: detail, quantity: 1 }])}
               disabled={detail.stock < 1} loading={submitting}>立即购买</Button>
             <Button icon={<StarFilled />} onClick={() => void fav(detail)}>收藏</Button>
@@ -375,9 +377,9 @@ export default function MallPage() {
           <List dataSource={cart} renderItem={(line) => (
             <List.Item actions={[
               <InputNumber key="qty" min={1} max={line.product.stock} value={line.quantity} size="small"
-                onChange={(value) => updateQuantity(line.product.id, value)} />,
+                onChange={(value) => void updateQuantity(line.id, value)} />,
               <Button key="delete" type="text" danger icon={<DeleteOutlined />}
-                onClick={() => updateQuantity(line.product.id, 0)} />,
+                onClick={() => void updateQuantity(line.id, 0)} />,
             ]}>
               <List.Item.Meta avatar={<img src={line.product.imageUrl} style={{ width: 64, height: 80, objectFit: 'cover', borderRadius: 6 }} />}
                 title={line.product.name}
@@ -401,7 +403,7 @@ export default function MallPage() {
             <Col span={12} key={product.id}><Card size="small" cover={<img src={product.imageUrl} style={{ height: 160, objectFit: 'cover' }} />}>
               <Card.Meta title={product.name} description={`¥${product.price}`} />
               <Space style={{ marginTop: 10 }}>
-                <Button size="small" type="primary" onClick={() => addCart(product)}>加入购物车</Button>
+                <Button size="small" type="primary" onClick={() => void addCart(product)}>加入购物车</Button>
                 <Button size="small" danger onClick={() => void deleteFavorite(product.id)}>取消收藏</Button>
               </Space>
             </Card></Col>

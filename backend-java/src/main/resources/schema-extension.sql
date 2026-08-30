@@ -23,3 +23,25 @@ CREATE TABLE IF NOT EXISTS user_auth_token (
   INDEX idx_user (user_id),
   INDEX idx_expires (expires_at)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS cart_item (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  product_id BIGINT NOT NULL,
+  quantity INT NOT NULL DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_user_product (user_id, product_id),
+  INDEX idx_user (user_id)
+) ENGINE=InnoDB;
+
+-- 售后审核字段：自动审核引擎（符合规则自动通过 / 不符合转人工）的判定痕迹
+SET @col = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'chaoyin' AND TABLE_NAME = 'after_sale' AND COLUMN_NAME = 'review_source');
+SET @ddl = IF(@col = 0, 'ALTER TABLE after_sale ADD COLUMN review_source VARCHAR(16) NULL COMMENT ''auto|manual''', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @col = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = 'chaoyin' AND TABLE_NAME = 'after_sale' AND COLUMN_NAME = 'review_reason');
+SET @ddl = IF(@col = 0, 'ALTER TABLE after_sale ADD COLUMN review_reason VARCHAR(255) NULL', 'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
