@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Button, Card, Col, Empty, Image as AntImage, Input, Row, Space, Tag, Typography,
+  Button, Card, Col, Empty, Image as AntImage, Input, Modal, Row, Space, Tag, Typography,
 } from 'antd'
-import { ExperimentOutlined, RobotOutlined, SendOutlined, UserOutlined } from '@ant-design/icons'
+import { AuditOutlined, ExperimentOutlined, RobotOutlined, SendOutlined, UserOutlined } from '@ant-design/icons'
 import { useUser } from '../App'
-import { Product } from '../api'
+import { Product, runEval } from '../api'
 import PlanPanel, { PlanData, ProgressLine } from '../components/PlanPanel'
 
 interface ChatMsg {
@@ -16,6 +16,7 @@ interface ChatMsg {
   outfit?: { name: string; items: { name: string; imageUrl?: string; source: string; price?: number }[]; reason?: string; ruleSources?: string[] }
   image?: { url: string; label: string; taskId?: number }
   progress?: { percent: number; stage: string }
+  handoff?: string
   error?: boolean
   thinking?: boolean
 }
@@ -44,6 +45,9 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false)
   const [plan, setPlan] = useState<PlanData>({})
   const [wsState, setWsState] = useState<'connecting' | 'open' | 'closed'>('closed')
+  const [evalOpen, setEvalOpen] = useState(false)
+  const [evalReport, setEvalReport] = useState<any>(null)
+  const [evalLoading, setEvalLoading] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const sessionRef = useRef<string>(localStorage.getItem('cy_session_id') || '')
   const userRef = useRef(user)
@@ -95,6 +99,16 @@ export default function ChatPage() {
         break
       case 'memory':
         patchPlan({ memory: ev.data?.memory ?? ev.data })
+        break
+      case 'safety':
+        patchPlan({ safety: ev.data })
+        break
+      case 'context':
+        patchPlan({ context: ev.data })
+        break
+      case 'handoff':
+        patch({ handoff: ev.data.reason })
+        patchPlan({ handoff: ev.data.reason })
         break
       case 'token':
         patchText(ev.data.text)
@@ -151,6 +165,18 @@ export default function ChatPage() {
     retryRef.current = window.setTimeout(connectWs, delay)
   }
 
+  const doEval = async () => {
+    setEvalOpen(true)
+    setEvalLoading(true)
+    try {
+      const res = await runEval()
+      setEvalReport(res.data)
+    } catch {
+      setEvalReport(null)
+    }
+    setEvalLoading(false)
+  }
+
   useEffect(() => {
     if (!sessionRef.current) {
       sessionRef.current = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -187,8 +213,10 @@ export default function ChatPage() {
 
     // WS 已连接 → 全双工走 Netty（发送 + 推送）；断开 → 降级 SSE
     const ws = wsRef.current
+    // Runtime Context：服务端可信字段（会员等级/风险等级/页面上下文），不由用户输入产生
+    const runtime = { memberLevel: 'silver', riskLevel: 'low', pageContext: { page: 'chat' } }
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'chat', sessionId: sessionRef.current, userId: uid, message: content }))
+      ws.send(JSON.stringify({ type: 'chat', sessionId: sessionRef.current, userId: uid, message: content, ...runtime }))
       return
     }
 
@@ -196,7 +224,10 @@ export default function ChatPage() {
       const res = await fetch('/agent/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionRef.current, user_id: uid, message: content, transport: 'sse' }),
+        body: JSON.stringify({
+          session_id: sessionRef.current, user_id: uid, message: content, transport: 'sse',
+          member_level: runtime.memberLevel, risk_level: runtime.riskLevel, page_context: runtime.pageContext,
+        }),
       })
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
       const reader = res.body.getReader()
@@ -280,6 +311,12 @@ export default function ChatPage() {
               </div>
             )}
             {m.progress && <ProgressLine percent={m.progress.percent} stage={m.progress.stage} />}
+            {m.handoff && (
+              <div style={{ marginTop: 8 }}>
+                <Tag color="volcano">已转人工</Tag>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>{m.handoff}</Typography.Text>
+              </div>
+            )}
             {m.image && (
               <div style={{ marginTop: 8 }}>
                 <AntImage src={m.image.url} width={240} style={{ borderRadius: 8 }} />
@@ -318,6 +355,7 @@ export default function ChatPage() {
             {wsState === 'open' && <Tag color="green">Netty WS 已连接</Tag>}
             {wsState === 'connecting' && <Tag color="orange">WS 连接中…</Tag>}
             {wsState === 'closed' && <Tag>SSE 降级模式</Tag>}
+            <Button size="small" icon={<AuditOutlined />} onClick={doEval}>回归评测</Button>
           </Space>
           <Button icon={<ExperimentOutlined />} onClick={() => send('基于当前搭配生成一张换装效果图')} disabled={sending}>
             生成效果图
@@ -335,8 +373,29 @@ export default function ChatPage() {
         <Typography.Paragraph type="secondary" style={{ fontSize: 11, marginBottom: 8 }}>
           意图识别 → 依赖 DAG（无依赖并行/依赖按拓扑顺序）→ 工具调用（MCP/RAG）→ 汇总回复
         </Typography.Paragraph>
-        <PlanPanel data={plan} />
+        <PlanPanel data={plan} sessionId={sessionRef.current} />
       </div>
+
+      <Modal
+        title="回归评测（eval_report）" open={evalOpen} onCancel={() => setEvalOpen(false)} footer={null} width={560}
+      >
+        {evalLoading ? <Typography.Text type="secondary">评测运行中（约 10 秒，走真实工具链路）…</Typography.Text> : evalReport ? (
+          <div>
+            <Tag color={evalReport.failed === 0 ? 'green' : 'red'} style={{ marginBottom: 8 }}>
+              passed={evalReport.passed} failed={evalReport.failed} total={evalReport.total}
+            </Tag>
+            {evalReport.cases?.map((c: any) => (
+              <div key={c.id} style={{ fontSize: 12, marginBottom: 4 }}>
+                <Space size={4}>
+                  <Tag color={c.passed ? 'green' : 'red'}>{c.passed ? 'PASS' : 'FAIL'}</Tag>
+                  <span>{c.name}</span>
+                  {c.failures?.length ? <Tag color="volcano">{c.failures.join(', ')}</Tag> : null}
+                </Space>
+              </div>
+            ))}
+          </div>
+        ) : <Typography.Text type="danger">评测接口不可用（请确认 Agent 服务已启动）</Typography.Text>}
+      </Modal>
     </div>
   )
 }

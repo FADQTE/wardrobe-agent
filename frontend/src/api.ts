@@ -148,3 +148,19 @@ export const uploadFile = async (file: File): Promise<string> => {
   if (body.code !== 0) throw new Error(body.msg || '上传失败')
   return body.data.url
 }
+
+// ---- 生产级证据链 ----
+export interface TraceEvent {
+  id: number
+  sessionId: string
+  eventType: string
+  category: string
+  payload: string
+  createdAt: string
+}
+
+export const getTrace = (sessionId: string, limit = 200) =>
+  api<TraceEvent[]>(`/api/internal/trace/${sessionId}?limit=${limit}`)
+
+export const runEval = () =>
+  fetch('/agent/eval/run', { method: 'POST' }).then((r) => r.json())

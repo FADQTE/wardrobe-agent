@@ -19,7 +19,9 @@ class SessionMemory:
     def __init__(self, session_id: str, user_id: int):
         self.session_id = session_id
         self.user_id = user_id
-        self.state = dict(DEFAULT_MEMORY)
+        # 深拷贝：DEFAULT_MEMORY 的嵌套 list 不能跨会话共享（否则污染新会话）
+        import copy
+        self.state = copy.deepcopy(DEFAULT_MEMORY)
 
     async def load(self):
         try:

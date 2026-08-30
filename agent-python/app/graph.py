@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""LangGraph 编排：意图识别 → 依赖 DAG 执行（无依赖并行）→ 汇总回复。
+"""LangGraph 编排：安全闸 → 意图识别 → 依赖 DAG 执行（无依赖并行）→ 汇总回复。
 
-图结构：intent → execute → assemble。
+图结构：safety → intent → execute → assemble。
+- safety：Prompt Injection / 越权 / 隐私扫描，命中拒答直接短路到 assemble
 - intent：结构化输出把自然语言拆为任务 DAG（依赖用 deps 引用任务 id）
 - execute：按拓扑层级执行——同层无依赖任务用 asyncio.gather 并行，
-  依赖任务在其依赖完成后的下一层执行
+  依赖任务在其依赖完成后的下一层执行；关键事实查询失败触发转人工
 - assemble：汇总任务结果为最终回复（搭配建议 + 规则来源 + 会话记忆）
 
 注：langgraph 0.2.74 的 Send 分支状态相互隔离（无法跨分支 join），
@@ -20,8 +21,10 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from . import config
+from .context import build_context_report
 from .intent import parse_intent
 from .llm import get_llm
+from .safety import REFUSAL_ANSWER, build_safety_decision
 from .tasks import execute_task
 
 TASK_NAMES = {
@@ -37,6 +40,9 @@ class AgentState(TypedDict, total=False):
     message: str
     memory_desc: str
     mem: Any
+    runtime: dict
+    safety_data: dict
+    handoff: str
     intent_data: dict
     tasks: list
     results: Annotated[list, operator.add]
@@ -46,10 +52,36 @@ class AgentState(TypedDict, total=False):
 
 # ---------- 节点 ----------
 
+async def safety_node(state: AgentState) -> dict:
+    """第一道安全闸：用户消息按外部文本扫描，索要系统信息/覆盖指令直接拒答。"""
+    decision = build_safety_decision(state["message"])
+    events = []
+    if decision["blocked_user_request"]:
+        events.append({"type": "status", "data": {
+            "text": "安全拦截：拒绝泄露系统提示词/内部指令", "stage": "safety"}})
+    events.append({"type": "safety", "data": {
+        "blocked": decision["blocked_user_request"],
+        "mode": decision["mode"],
+        "refusedTopics": decision["refused_topics"],
+        "scans": decision["scans"],
+    }})
+    return {"safety_data": decision, "events": events}
+
+
+def route_after_safety(state: AgentState):
+    if state["safety_data"].get("blocked_user_request"):
+        return "assemble"
+    return "intent"
+
+
 async def intent_node(state: AgentState) -> dict:
     intent = parse_intent(state["message"], state["memory_desc"])
     tasks = intent.get("tasks", [])
     events = []
+    # Context Builder：本轮上下文组装摘要（来源 + 可信度 + 冲突解析）
+    runtime = state.get("runtime") or {}
+    ctx_report = build_context_report(runtime, state["memory_desc"], 0, 0, state["message"])
+    events.append({"type": "context", "data": ctx_report})
     if intent.get("needsClarification"):
         events.append({"type": "status", "data": {
             "text": "意图置信度不足 / 关键信息缺失，进入澄清", "stage": "clarify"}})
@@ -61,7 +93,9 @@ async def intent_node(state: AgentState) -> dict:
     events.append({"type": "plan", "data": {
         "intents": {"confidence": intent.get("confidence"), "summary": intent.get("summary"),
                     "needsClarification": intent.get("needsClarification"),
-                    "clarifyQuestion": intent.get("clarifyQuestion")},
+                    "clarifyQuestion": intent.get("clarifyQuestion"),
+                    "riskLevel": intent.get("risk_level", "low"),
+                    "fallbackPolicy": intent.get("fallback_policy", "tool_first")},
         "dag": dag}})
     return {"intent_data": intent, "tasks": tasks, "events": events}
 
@@ -81,6 +115,7 @@ async def execute_node(state: AgentState) -> dict:
     done: set = set()
     pending = list(tasks)
     level = 0
+    handoff = ""
     while pending:
         level += 1
         ready = [t for t in pending if all(d in done for d in t.get("deps", []))]
@@ -98,7 +133,21 @@ async def execute_node(state: AgentState) -> dict:
             events.extend(r.get("events", []))
         done.update(t["id"] for t in ready)
         pending = [t for t in pending if t["id"] not in done]
-    return {"results": results, "events": events}
+        # 错误分类降级：关键事实查询失败（超时/未知异常）→ 转人工，不猜答案
+        if not handoff:
+            critical = [r for r in results if not r.get("ok")
+                        and r.get("error_category") in ("timeout", "unknown")
+                        and r.get("type") in ("wardrobe", "product", "rag", "rule_query", "order")]
+            if critical:
+                handoff = "业务事实查询失败：" + "、".join(
+                    TASK_NAMES.get(r["type"], r["type"]) for r in critical)
+                events.append({"type": "handoff", "data": {"reason": handoff}})
+                events.append({"type": "status", "data": {
+                    "text": f"降级转人工：{handoff}", "stage": "handoff"}})
+    upd: dict = {"results": results, "events": events}
+    if handoff:
+        upd["handoff"] = handoff
+    return upd
 
 
 # ---------- 汇总 ----------
@@ -182,7 +231,13 @@ def _compose_llm(state: AgentState) -> str:
 async def assemble_node(state: AgentState) -> dict:
     events = []
     memory = state.get("mem")
-    if state["intent_data"].get("needsClarification"):
+    if state.get("safety_data", {}).get("blocked_user_request"):
+        # 安全拒答：不进入业务编排，不生成 outfit
+        text = REFUSAL_ANSWER
+    elif state.get("handoff"):
+        # 降级转人工：关键事实不可用时不猜答案
+        text = f"抱歉，当前服务暂时无法完成本次查询（{state['handoff']}）。已为你转接人工客服，请稍候。"
+    elif state["intent_data"].get("needsClarification"):
         text = state["intent_data"].get("clarifyQuestion") or "可以补充一点信息吗？"
         if memory:
             memory.state["clarify_count"] += 1
@@ -207,10 +262,12 @@ async def assemble_node(state: AgentState) -> dict:
 
 def build_graph():
     g = StateGraph(AgentState)
+    g.add_node("safety", safety_node)
     g.add_node("intent", intent_node)
     g.add_node("execute", execute_node)
     g.add_node("assemble", assemble_node)
-    g.add_edge(START, "intent")
+    g.add_edge(START, "safety")
+    g.add_conditional_edges("safety", route_after_safety, ["intent", "assemble"])
     g.add_conditional_edges("intent", route_after_intent, ["execute", "assemble"])
     g.add_edge("execute", "assemble")
     g.add_edge("assemble", END)

@@ -130,3 +130,14 @@ CREATE TABLE IF NOT EXISTS tryon_task (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   finished_at DATETIME
 ) ENGINE=InnoDB;
+
+-- Trace 可观测：每轮执行的公开证据（不含系统提示词/CoT/密钥/隐私原文）
+CREATE TABLE IF NOT EXISTS trace_event (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  session_id VARCHAR(64) NOT NULL,
+  event_type VARCHAR(32) NOT NULL COMMENT 'plan|status|tool|rag|product|outfit|image|memory|token|done|error|safety|handoff|context',
+  category VARCHAR(32) COMMENT 'entry|fact|knowledge|control|result|safety|cost',
+  payload JSON,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_session (session_id)
+) ENGINE=InnoDB;

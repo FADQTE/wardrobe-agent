@@ -21,12 +21,29 @@ TRYON_PRESETS = [
 ]
 
 
-def _tool_event(name, args, ok, summary):
-    return {"type": "tool", "data": {"name": name, "args": args, "ok": ok, "summary": summary}}
+def _tool_event(name, args, ok, summary, error_category=None):
+    data = {"name": name, "args": args, "ok": ok, "summary": summary}
+    if error_category:
+        data["errorCategory"] = error_category
+    return {"type": "tool", "data": data}
 
 
 def _status_event(text, stage=""):
     return {"type": "status", "data": {"text": text, "stage": stage}}
+
+
+def classify_error(e: Exception) -> str:
+    """错误分类：timeout | not_found | permission | business | unknown（决定重试/降级策略）。"""
+    s = str(e).lower()
+    if "timeout" in s or "timed out" in s or "超时" in s:
+        return "timeout"
+    if "not found" in s or "不存在" in s or "404" in s:
+        return "not_found"
+    if "permission" in s or "denied" in s or "权限" in s or "forbidden" in s:
+        return "permission"
+    if "库存" in s or "状态" in s or "business" in s or "不可用" in s:
+        return "business"
+    return "unknown"
 
 
 # ---------- 各任务实现 ----------
@@ -35,7 +52,7 @@ async def do_wardrobe(task, state, memory, ctx) -> dict:
     params = task.get("params", {})
     events = [_status_event("查询衣橱单品…", "wardrobe")]
     items = []
-    ok, summary = True, ""
+    ok, summary, err_cat = True, "", None
     try:
         result = await call_tool("listWardrobe", {"userId": ctx["user_id"]})
         items = json.loads(result) if isinstance(result, str) else result
@@ -49,7 +66,9 @@ async def do_wardrobe(task, state, memory, ctx) -> dict:
         summary = f"衣橱命中 {len(items)} 件" + (f"（{'、'.join(tags)}）" if tags else "")
     except Exception as e:
         ok, summary = False, f"衣橱查询失败: {e}"
-    events.append(_tool_event("listWardrobe", params, ok, summary))
+        err_cat = classify_error(e)
+    events.append(_tool_event("listWardrobe", params, ok, summary,
+                              error_category=None if ok else err_cat))
     if ok and items:
         memory.select(items)
         events.append({"type": "product", "data": {
@@ -57,7 +76,10 @@ async def do_wardrobe(task, state, memory, ctx) -> dict:
                 {"id": i.get("id"), "name": i.get("name"), "imageUrl": i.get("imageUrl"),
                  "price": 0, "category": i.get("category"), "color": i.get("color"),
                  "season": i.get("season"), "style": i.get("style")} for i in items[:6]]}})
-    return {"task_id": task["id"], "type": "wardrobe", "ok": ok, "data": {"items": items}, "events": events}
+    result = {"task_id": task["id"], "type": "wardrobe", "ok": ok, "data": {"items": items}, "events": events}
+    if err_cat:
+        result["error_category"] = err_cat
+    return result
 
 
 async def do_rag(task, state, memory, rule_type=None) -> dict:
@@ -74,8 +96,11 @@ async def do_rag(task, state, memory, rule_type=None) -> dict:
                                   True, f"召回 {len(rules)} 条有效规则（已过滤过期/未生效/未发布）"))
         return {"task_id": task["id"], "type": stage, "ok": True, "data": {"rules": rules}, "events": events}
     except Exception as e:
-        events.append(_tool_event("hybrid_rule_search", params, False, f"ES 检索失败: {e}"))
-        return {"task_id": task["id"], "type": stage, "ok": False, "data": {"rules": []}, "events": events}
+        err_cat = classify_error(e)
+        events.append(_tool_event("hybrid_rule_search", params, False, f"ES 检索失败: {e}",
+                                  error_category=err_cat))
+        return {"task_id": task["id"], "type": stage, "ok": False,
+                "data": {"rules": []}, "error_category": err_cat, "events": events}
 
 
 async def do_product(task, state, memory) -> dict:
@@ -96,8 +121,11 @@ async def do_product(task, state, memory) -> dict:
         return {"task_id": task["id"], "type": "product", "ok": True,
                 "data": {"products": products}, "events": events}
     except Exception as e:
-        events.append(_tool_event("hybrid_product_search", params, False, f"ES 检索失败: {e}"))
-        return {"task_id": task["id"], "type": "product", "ok": False, "data": {"products": []}, "events": events}
+        err_cat = classify_error(e)
+        events.append(_tool_event("hybrid_product_search", params, False, f"ES 检索失败: {e}",
+                                  error_category=err_cat))
+        return {"task_id": task["id"], "type": "product", "ok": False,
+                "data": {"products": []}, "error_category": err_cat, "events": events}
 
 
 async def do_image(task, state, memory, ctx) -> dict:
@@ -156,8 +184,10 @@ async def do_favorite(task, state, memory, ctx) -> dict:
         kw = params.get("keyword") or ""
         ids = [p["id"] for p in _products_from_results(state) if kw in p.get("name", "")]
     if not ids:
-        events.append(_tool_event("addFavorite", params, False, "未定位到商品，请先检索商城商品"))
-        return {"task_id": task["id"], "type": "favorite", "ok": False, "data": {}, "events": events}
+        events.append(_tool_event("addFavorite", params, False, "未定位到商品，请先检索商城商品",
+                                  error_category="not_found"))
+        return {"task_id": task["id"], "type": "favorite", "ok": False,
+                "data": {}, "error_category": "not_found", "events": events}
     done = []
     for pid in ids[:3]:
         try:
@@ -176,8 +206,10 @@ async def do_order(task, state, memory, ctx) -> dict:
     if not ids:
         ids = [p["id"] for p in _products_from_results(state)][:3]
     if not ids:
-        events.append(_tool_event("createOrder", params, False, "未定位到商品，请先检索商城商品"))
-        return {"task_id": task["id"], "type": "order", "ok": False, "data": {}, "events": events}
+        events.append(_tool_event("createOrder", params, False, "未定位到商品，请先检索商城商品",
+                                  error_category="not_found"))
+        return {"task_id": task["id"], "type": "order", "ok": False,
+                "data": {}, "error_category": "not_found", "events": events}
     try:
         result = await call_tool("createOrder", {
             "userId": ctx["user_id"],
@@ -191,8 +223,11 @@ async def do_order(task, state, memory, ctx) -> dict:
                                   f"下单成功，订单号 {order_no}，状态 {data.get('status') if isinstance(data, dict) else ''}"))
         return {"task_id": task["id"], "type": "order", "ok": True, "data": data, "events": events}
     except Exception as e:
-        events.append(_tool_event("createOrder", {"productIds": ids}, False, str(e)[:100]))
-        return {"task_id": task["id"], "type": "order", "ok": False, "data": {}, "events": events}
+        err_cat = classify_error(e)
+        events.append(_tool_event("createOrder", {"productIds": ids}, False, str(e)[:100],
+                                  error_category=err_cat))
+        return {"task_id": task["id"], "type": "order", "ok": False,
+                "data": {}, "error_category": err_cat, "events": events}
 
 
 async def execute_task(task: dict, results: list, memory, ctx: dict) -> dict:

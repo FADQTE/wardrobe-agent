@@ -6,6 +6,11 @@ from . import config
 from .llm import get_llm, parse_json_loose
 from .mock_intent import parse_mock
 
+# 任务白名单：模型输出必须落回这里，防幻想工具/未注册路径
+VALID_TASK_TYPES = {"wardrobe", "rag", "rule_query", "product", "image", "order", "favorite", "clarify"}
+# 写动作/高风险任务：进入后 risk_level=high
+WRITE_TASK_TYPES = {"order"}
+
 INTENT_SYSTEM = """你是「潮引智能衣橱商城」的穿搭客服编排器。把用户的自然语言请求拆解为可执行的任务依赖 DAG。
 
 可用任务类型：
@@ -53,9 +58,16 @@ def _normalize(intent: dict) -> dict:
     for i, t in enumerate(intent.get("tasks", [])):
         if not isinstance(t, dict) or "type" not in t:
             continue
+        # 任务白名单：模型幻想/未知类型一律丢弃，防止混入未注册执行路径
+        if t["type"] not in VALID_TASK_TYPES:
+            continue
         t.setdefault("id", f"t{i + 1}")
         t.setdefault("params", {})
         t.setdefault("deps", [])
         tasks.append(t)
     intent["tasks"] = tasks
+    # RoutePlan 契约：风险等级 + 兜底策略（下单/写动作视为高风险）
+    has_write = any(t.get("type") in WRITE_TASK_TYPES for t in tasks)
+    intent.setdefault("risk_level", "high" if has_write else "low")
+    intent.setdefault("fallback_policy", "tool_first")
     return intent

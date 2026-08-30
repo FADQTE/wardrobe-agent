@@ -25,6 +25,10 @@ class ChatRequest(BaseModel):
     message: str
     # sse: 事件随 SSE 流返回；ws: 事件经 Java PushController 推送到 Netty WS 网关
     transport: str = "sse"
+    # Runtime Context（服务端可信字段，不由用户自然语言产生）
+    member_level: str = ""
+    risk_level: str = ""
+    page_context: dict | None = None
 
 
 def _sse(ev: dict) -> str:
@@ -78,6 +82,10 @@ async def chat(req: ChatRequest):
 
             ws_mode = req.transport == "ws"
 
+            # Trace 可观测：每轮执行证据持久化到 Java trace_event（只存公开摘要）
+            from .trace import TraceRecorder
+            trace = TraceRecorder(req.session_id)
+
             async def push(ev):
                 """ws 模式：事件经 Java 内部接口推送到 Netty WS 网关（按 sessionId 隔离）。"""
                 try:
@@ -88,15 +96,25 @@ async def chat(req: ChatRequest):
                     print(f"[push] failed: {e}", flush=True)
 
             async def emit(ev):
+                trace.record(ev)
                 if ws_mode:
                     await push(ev)
                 else:
                     yield _sse(ev)
 
+            # Runtime Context 双通道（trusted_for_model / system_only + 冲突解析）
+            from .context import RuntimeContext
+            runtime = RuntimeContext(
+                user_id=req.user_id, member_level=req.member_level,
+                risk_level=req.risk_level, page_context=req.page_context,
+                user_message=req.message,
+            ).build()
+
             graph = build_graph()
             inputs = {
                 "session_id": req.session_id, "user_id": req.user_id,
                 "message": req.message, "memory_desc": memory.describe(), "mem": memory,
+                "runtime": runtime,
             }
             final_state = None
             async for mode, chunk in graph.astream(inputs, stream_mode=["updates", "values"]):
@@ -116,6 +134,7 @@ async def chat(req: ChatRequest):
                 await asyncio.sleep(0.015)
             async for sse_line in emit({"type": "done", "data": {"reply": text, "sessionId": req.session_id}}):
                 yield sse_line
+            await trace.wait()
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -149,6 +168,13 @@ async def product_search(
 
 class ReindexRequest(BaseModel):
     rule_id: int
+
+
+@router.post("/eval/run")
+async def eval_run():
+    """固定剧本回归评测：走真实 Agent 代码路径，返回 eval_report。"""
+    from .evals import run_all
+    return {"code": 0, "msg": "ok", "data": await run_all()}
 
 
 @router.post("/internal/rules/reindex")
