@@ -282,15 +282,23 @@ def _cache_put(key, value):
 
 def hybrid_rule_search(query: str, tags: Optional[list[str]] = None,
                        rule_type: Optional[str] = None, only_time_valid: bool = True,
-                       size: int = 6, fallback_all: bool = False) -> list[dict]:
-    """规则 RAG：BM25/kNN 双路召回，发布状态、标签和生效时间窗在两路中一致过滤。"""
+                       size: int = 6, fallback_all: bool = False,
+                       only_published: bool = True) -> list[dict]:
+    """规则 RAG：BM25/kNN 双路召回，发布状态、标签和生效时间窗在两路中一致过滤。
+
+    only_published=False 用于「用户点名某个活动/优惠券」时的状态回查：
+    该场景必须能召回已下线/草稿规则，才能向用户说明真实状态。
+    """
     tags = normalize_tags(tags)
-    cache_key = (query, tuple(tags), rule_type, only_time_valid, size, fallback_all)
+    cache_key = (query, tuple(tags), rule_type, only_time_valid, size, fallback_all,
+                 only_published)
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
-    filters: list[dict] = [{"term": {"publish_status": "published"}}]
+    filters: list[dict] = []
+    if only_published:
+        filters.append({"term": {"publish_status": "published"}})
     if rule_type:
         filters.append({"term": {"type": rule_type}})
     if only_time_valid:
@@ -342,12 +350,13 @@ def hybrid_rule_search(query: str, tags: Optional[list[str]] = None,
     if not rules and tags:
         rules = hybrid_rule_search(
             query, tags=None, rule_type=rule_type, only_time_valid=only_time_valid,
-            size=size, fallback_all=fallback_all,
+            size=size, fallback_all=fallback_all, only_published=only_published,
         )
     if fallback_all and not rules and query:
         rules = hybrid_rule_search(
             "", tags=tags, rule_type=rule_type,
             only_time_valid=only_time_valid, size=size, fallback_all=False,
+            only_published=only_published,
         )
     _cache_put(cache_key, rules)
     return rules

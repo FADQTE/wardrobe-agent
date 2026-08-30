@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import operator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -26,7 +26,7 @@ from .context import build_context_report
 from .intent import parse_intent
 from .llm import get_llm
 from .safety import REFUSAL_ANSWER, build_safety_decision
-from .tasks import MOCK_TRYON_NOTICE, execute_task
+from .tasks import MOCK_TRYON_NOTICE, execute_task, is_broad_activity_query
 
 TASK_NAMES = {
     "wardrobe": "衣橱查询", "rag": "穿搭规则RAG", "rule_query": "活动规则查询",
@@ -200,6 +200,56 @@ def _format_activity_end(value: str | None) -> str:
         return str(value)
 
 
+def _parse_ts(value) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+PUBLISH_STATUS_CN = {
+    "published": "已发布", "offline": "已下线（停用）", "draft": "未发布（草稿/审核中）",
+}
+
+
+def _compose_rule_status_answer(hit: dict) -> str:
+    """用户点名某活动/优惠券时，按其真实状态给确定性答复，而不是拿无关活动清单充数。"""
+    title = hit.get("title") or "该活动"
+    status = hit.get("publishStatus") or ""
+    content = hit.get("content") or "详情以活动页为准"
+    start, end = _parse_ts(hit.get("effectiveFrom")), _parse_ts(hit.get("effectiveTo"))
+    now = datetime.now(timezone.utc)
+
+    def _fmt(dt: datetime | None) -> str:
+        return dt.strftime("%m月%d日") if dt else "?"
+
+    if start or end:
+        span = f"{_fmt(start)} 至 {_fmt(end)}"
+    else:
+        span = "以活动页为准"
+
+    if status == "published" and start and end:
+        if now < start:
+            lines = [f"你说的「{title}」目前**尚未开始**，暂时使用不了。"]
+        elif now > end:
+            lines = [f"你说的「{title}」**已经过期**了，所以用不了。"]
+        else:
+            return (f"查了一下，「{title}」目前**正在生效中**：\n"
+                    f"- 活动内容：{content}\n"
+                    f"- 有效期：{span}\n\n"
+                    f"如果你下单时没能享受优惠，请核对是否满足参与条件（如首单、满减门槛）。")
+    elif status == "offline":
+        lines = [f"你说的「{title}」目前**已下线**，所以用不了了。"]
+    elif status == "draft":
+        lines = [f"你说的「{title}」还**未发布**（处于草稿/审核中），暂时使用不了。"]
+    else:
+        lines = [f"你说的「{title}」目前不可用（状态：{PUBLISH_STATUS_CN.get(status, status or '未知')}）。"]
+    lines.append(f"- 活动内容：{content}")
+    lines.append(f"- 有效期：{span}")
+    lines.append("目前还在生效的活动我可以再列给你，需要就说一声。")
+    return "\n".join(lines)
+
+
 def _compose_activity_list(state: AgentState) -> str | None:
     """纯活动查询用确定性清单回答，保证每条召回证据都被展示且不被模型省略。"""
     activity_results = _get_results(state, "rule_query")
@@ -207,7 +257,18 @@ def _compose_activity_list(state: AgentState) -> str | None:
         return None
     if _get_results(state, "wardrobe", "rag", "product", "image", "order", "favorite"):
         return None
-    rules = activity_results[0]["data"].get("rules", [])
+    data = activity_results[0]["data"]
+    # 用户点名具体活动/优惠券：优先答复该规则的真实状态，不输出活动清单
+    if data.get("statusNotice"):
+        return _compose_rule_status_answer(data["statusNotice"])
+    # 清单模板只服务“现在都有什么活动”类目录式问题。改写后的检索词可能丢失
+    # 清单语义（如“现在都有什么活动”被改写成“当前所有活动”），因此同时用
+    # 用户原话兜底判定；具体优惠/规则问题交给模型基于召回证据作答。
+    message = state.get("message") or ""
+    broad = bool(data.get("broad")) or bool(message and is_broad_activity_query(message))
+    if not broad:
+        return None
+    rules = data.get("rules", [])
     if not rules:
         return "目前没有查到可靠的进行中活动。你也可以告诉我想买的品类，我再帮你查对应优惠。"
     lines = [f"目前有 **{len(rules)} 个正在生效的活动**（按结束时间排序）：", ""]
@@ -342,8 +403,16 @@ def _compose_llm(state: AgentState) -> str:
         elif r.get("type") in ("rag", "rule_query") and r.get("ok"):
             results.append({"type": r["type"], "rules": [
                 {"title": x.get("title"), "content": x.get("content"), "source": x.get("source"),
-                 "effectiveFrom": x.get("effectiveFrom"), "effectiveTo": x.get("effectiveTo")}
-                for x in r["data"].get("rules", [])]})
+                 "effectiveFrom": x.get("effectiveFrom"), "effectiveTo": x.get("effectiveTo"),
+                 "publishStatus": x.get("publishStatus"), "timeValid": x.get("timeValid")}
+                for x in r["data"].get("rules", [])],
+                **({"statusNotice": {
+                        "title": r["data"]["statusNotice"].get("title"),
+                        "content": r["data"]["statusNotice"].get("content"),
+                        "publishStatus": r["data"]["statusNotice"].get("publishStatus"),
+                        "effectiveFrom": r["data"]["statusNotice"].get("effectiveFrom"),
+                        "effectiveTo": r["data"]["statusNotice"].get("effectiveTo")}}
+                   if r["data"].get("statusNotice") else {})})
         elif r.get("type") == "product" and r.get("ok"):
             results.append({"type": "product", "products": [
                 {"name": p.get("name"), "price": p.get("price"), "color": p.get("color"),

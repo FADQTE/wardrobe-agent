@@ -21,7 +21,7 @@ INTENT_SYSTEM = """你是智能衣橱的穿搭客服编排器。把用户的自�
 可用任务类型：
 - wardrobe: 查询用户个人衣橱单品。params: {tags: [颜色/品类关键词，如 "白色","衬衫"]}
 - rag: 检索穿搭规则(outfit)。params: {query: 场景描述, tags: [季节/风格标签]}
-- rule_query: 查询商城活动规则(activity，满减/折扣/优惠)。params: {query}
+- rule_query: 查询商城活动规则(activity，满减/折扣/优惠券)。params: {query, activityName?} —— 用户点名具体活动/优惠券时 activityName 填其名称
 - product: 检索商城在售商品。params: {keyword, category, color, season, style, maxPrice}
 - image: 生成换装效果图。params: {label} —— 必须用 deps 依赖 wardrobe/rag/product
 - order: 创建订单购买商品。params: {productIds: []} —— deps 依赖 product
@@ -39,6 +39,7 @@ INTENT_SYSTEM = """你是智能衣橱的穿搭客服编排器。把用户的自�
 5. "预算X以内" → product 任务 maxPrice=X；"换成商城在售的" → product 任务
 6. "退款支持吗/能退吗/退换货规则" → aftersale(action=policy)；"售后进度" → aftersale(action=query)
 7. "帮我查订单/我的订单" → order_query；"物流/快递到哪" → logistics。订单号格式通常为 CY 加数字
+8. "某优惠券/活动还能用吗、为什么用不了、是不是过期了" → rule_query，activityName 填用户提到的活动或优惠券名称
 
 输出 JSON（不要输出其他内容）：
 {"confidence": 0.9, "needsClarification": false, "clarifyQuestion": "", "summary": "一句话概括", "tasks": [{"id":"t1","type":"wardrobe","params":{},"deps":[]}]}

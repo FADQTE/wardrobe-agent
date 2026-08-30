@@ -127,10 +127,54 @@ def classify_error(e: Exception) -> str:
 def is_broad_activity_query(query: str) -> bool:
     """识别“现在有什么活动”一类清单查询，避免相关性阈值把有效活动压成一条。"""
     remaining = re.sub(r"[\s？?！!，,。.：:]", "", query or "")
-    for word in ("告诉我", "帮我查", "查一下", "看一下", "请问", "现在", "当前", "最近",
-                 "商城", "正在进行", "进行中", "有什么", "有哪些", "活动", "优惠", "促销", "折扣", "吗", "呢"):
+    for word in ("告诉我", "帮我查", "查一下", "看一下", "请问", "现在", "当前", "目前", "最近",
+                 "商城", "正在进行", "进行中", "有什么", "有哪些", "活动", "优惠", "促销", "折扣", "吗", "呢",
+                 "还", "都", "什么", "所有", "全部"):
         remaining = remaining.replace(word, "")
     return not remaining
+
+
+# 活动/优惠券类问题里的泛词：剥离后再做名称匹配，防止「XX活动」「优惠券」误命中
+_GENERIC_RULE_WORDS = ("优惠券", "优惠", "折扣", "促销", "满减", "活动", "券")
+
+
+def _rule_name_core(text: str) -> str:
+    core = (text or "").strip()
+    for word in _GENERIC_RULE_WORDS:
+        core = core.replace(word, "")
+    return core.strip()
+
+
+def _lookup_named_activity(query: str, params: dict, strict_rules: list[dict]) -> dict | None:
+    """用户点名某个活动/优惠券时，按名称回查其真实状态（含已下线/草稿/过期）。
+
+    「仅展示已发布」过滤会把被问的那条规则直接吞掉，导致答非所问；
+    这里放开发布状态与时间窗回查，命中且不在正常召回结果里 → 返回状态证据。
+    """
+    raw_name = (params.get("activityName") or "").strip()
+    name = _rule_name_core(raw_name)
+    query_core = _rule_name_core(query)
+    if not name and len(query_core) < 3:
+        return None  # 剥掉泛词后没有可识别的名称，谈不上“点名”
+    candidates = rag.hybrid_rule_search(
+        raw_name or query, rule_type="activity", only_time_valid=False,
+        only_published=False, size=8)
+    strict_ids = {r["id"] for r in strict_rules}
+    for rule in candidates:
+        title = _rule_name_core(rule.get("title") or "")
+        if not title:
+            continue
+        matched = (
+            (name and (title == name or name in title or title in name))
+            or (title in query_core or query_core in title)
+            or len(set(title) & set(query_core)) >= 2
+        )
+        if not matched:
+            continue
+        if rule["id"] in strict_ids:
+            return None  # 已发布且生效中，正常召回已覆盖，无需状态说明
+        return rule
+    return None
 
 
 # ---------- 各任务实现 ----------
@@ -183,7 +227,17 @@ async def do_rag(task, state, memory, rule_type=None) -> dict:
         rules = rag.hybrid_rule_search(search_query, tags=tags, rule_type=rule_type,
                                        only_time_valid=True, fallback_all=(rule_type == "activity"),
                                        size=candidate_size)
-        if config.RERANK_ENABLED and search_query and len(rules) > 1:
+        # 用户点名具体活动/优惠券的追问：优先查该规则的真实状态，避免答非所问
+        status_hit = None
+        if rule_type == "activity" and not broad_activity and search_query:
+            status_hit = _lookup_named_activity(search_query, params, rules)
+            if status_hit:
+                events.append(_tool_event(
+                    "activity_status_lookup", {"name": status_hit.get("title"),
+                                               "publishStatus": status_hit.get("publishStatus")},
+                    True, f"「{status_hit.get('title')}」当前状态：{status_hit.get('publishStatus')}"))
+        low_confidence = False
+        if config.RERANK_ENABLED and search_query and len(rules) > 1 and not status_hit:
             from . import rerank as rerank_mod
             rules = await rerank_mod.rerank(
                 search_query,
@@ -191,10 +245,15 @@ async def do_rag(task, state, memory, rule_type=None) -> dict:
                 top_k=6)
             events.append(_tool_event("rerank", {"query": search_query, "topK": len(rules)}, True,
                                       f"Reranker 重排 Top{len(rules)}（Qwen3-Reranker 本地部署）"))
+            low_confidence = any(r.get("rerankLowConfidence") for r in rules)
+            if low_confidence and rule_type == "activity":
+                # 重排判定全部候选与问题不相关：宁可承认没查到，也不拿无关活动充当答案
+                rules = []
+                events.append(_status_event("候选活动与问题相关度低，已丢弃无关证据", stage))
         retrieval_mode = rules[0].get("retrievalMode") if rules else (
             "catalog_filter" if broad_activity else "bm25")
         events.append({"type": "rag", "data": {
-            "rules": rules, "query": query,
+            "rules": rules, "query": query, "statusNotice": status_hit,
             "retrieval": {"mode": retrieval_mode,
                           "channels": rules[0].get("retrievalChannels", []) if rules else []},
         }})
@@ -204,7 +263,11 @@ async def do_rag(task, state, memory, rule_type=None) -> dict:
         },
                                   True, f"召回 {len(rules)} 条有效规则（{retrieval_mode}；"
                                         "已过滤过期/未生效/未发布）"))
-        return {"task_id": task["id"], "type": stage, "ok": True, "data": {"rules": rules}, "events": events}
+        data: dict = {"rules": rules, "statusNotice": status_hit}
+        if rule_type == "activity":
+            # 供汇总层区分清单式问题与具体优惠问题
+            data["broad"] = broad_activity
+        return {"task_id": task["id"], "type": stage, "ok": True, "data": data, "events": events}
     except Exception as e:
         err_cat = classify_error(e)
         events.append(_tool_event("hybrid_rule_search", params, False, f"ES 检索失败: {e}",
