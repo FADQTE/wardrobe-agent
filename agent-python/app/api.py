@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -203,6 +204,12 @@ async def chat(req: ChatRequest, request: Request):
             # Trace 可观测：每轮执行证据持久化到 Java trace_event（只存公开摘要）
             from .trace import TraceRecorder
             trace = TraceRecorder(req.session_id)
+            turn_started = time.monotonic()
+            # 输入观测：记录本轮入口（消息截断摘要 + 运行时通道），与 done 的输出观测对账
+            trace.record({"type": "entry", "data": {
+                "message": req.message, "transport": req.transport,
+                "memberLevel": req.member_level, "pageContext": req.page_context,
+            }})
 
             async def push(ev):
                 """ws 模式：事件经 Java 内部接口推送到 Netty WS 网关（按 sessionId 隔离）。"""
@@ -280,7 +287,9 @@ async def chat(req: ChatRequest, request: Request):
                 async for sse_line in emit({"type": "token", "data": {"text": text[i:i + 8]}}):
                     yield sse_line
                 await asyncio.sleep(0.015)
-            async for sse_line in emit({"type": "done", "data": {"reply": text, "sessionId": req.session_id}}):
+            async for sse_line in emit({"type": "done", "data": {
+                    "reply": text, "sessionId": req.session_id,
+                    "latencyMs": int((time.monotonic() - turn_started) * 1000)}}):
                 yield sse_line
             await trace.wait()
             # 长期记忆捕获：本轮结束后后台执行（抽取+治理落库），不阻塞响应收尾

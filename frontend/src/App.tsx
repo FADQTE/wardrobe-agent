@@ -7,6 +7,7 @@ import {
   HddOutlined,
   RobotOutlined,
   ScheduleOutlined,
+  SkinOutlined,
   LogoutOutlined,
   UserOutlined,
 } from '@ant-design/icons'
@@ -94,9 +95,10 @@ export default function App() {
     <ConfigProvider locale={zhCN}>
       <UserContext.Provider value={{ user, signOut }}>
         <Layout style={{ minHeight: '100vh' }}>
-          <Sider theme="light" width={176}>
-            <div style={{ padding: '14px 16px', fontSize: 16, fontWeight: 700, color: '#1677ff' }}>
-              智能衣橱
+          <Sider theme="light" width={192} className="app-sider">
+            <div className="brand-block">
+              <span className="brand-mark"><SkinOutlined /></span>
+              <span className="brand-name">智能衣橱</span>
             </div>
             <Menu
               mode="inline"
@@ -104,6 +106,7 @@ export default function App() {
               items={menuItems}
               onClick={({ key }) => navigate(key)}
             />
+            <div className="sider-footer">衣橱 · 商城 · 试穿 · 可观测</div>
           </Sider>
           <Layout>
             <Header
@@ -130,16 +133,18 @@ export default function App() {
                 </button>
               </Dropdown>
             </Header>
-            <Content style={{ padding: 16, overflow: 'auto' }}>
-              <Routes>
-                <Route path="/" element={<Navigate to="/chat" replace />} />
-                <Route path="/chat" element={<ChatPage />} />
-                <Route path="/chat/:sessionId" element={<ChatPage />} />
-                <Route path="/wardrobe" element={<WardrobePage />} />
-                <Route path="/mall" element={<MallPage />} />
-                <Route path="/rules" element={<RulesPage />} />
-                <Route path="/observe" element={<ObservePage />} />
-              </Routes>
+            <Content style={{ padding: 20, overflow: 'auto' }}>
+              <div className="page-shell">
+                <Routes>
+                  <Route path="/" element={<Navigate to="/chat" replace />} />
+                  <Route path="/chat" element={<ChatPage />} />
+                  <Route path="/chat/:sessionId" element={<ChatPage />} />
+                  <Route path="/wardrobe" element={<WardrobePage />} />
+                  <Route path="/mall" element={<MallPage />} />
+                  <Route path="/rules" element={<RulesPage />} />
+                  <Route path="/observe" element={<ObservePage />} />
+                </Routes>
+              </div>
             </Content>
           </Layout>
         </Layout>

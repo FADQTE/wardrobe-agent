@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Button, Card, Col, Empty, Form, Input, Modal, Popconfirm, Row, Select,
-  Space, Tag, Upload, message,
+  Space, Tag, Typography, Upload, message,
 } from 'antd'
 import { DeleteOutlined, EditOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
+import PageHeader from '../components/PageHeader'
 import { useUser } from '../App'
 import {
   WardrobeItem, addWardrobeItem, deleteWardrobeItem, listWardrobe, updateWardrobeItem, uploadFile,
@@ -69,17 +70,27 @@ export default function WardrobePage() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 12 }}>
-        <Select
-          allowClear placeholder="按类目筛选" style={{ width: 140 }} value={catFilter || undefined}
-          onChange={(v) => setCatFilter(v ?? '')}
-          options={Object.entries(CATEGORY_MAP).map(([k, v]) => ({ value: k, label: v }))}
-        />
-        <span style={{ color: '#999' }}>共 {filtered.length} 件单品 · 标签与商城商品同构，支持“已有单品+在售商品”混合搭配</span>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>添加单品</Button>
-      </Space>
+      <PageHeader
+        title="我的衣橱"
+        description="单品标签与商城商品同构，支持「已有单品 + 在售商品」混合搭配推荐"
+        extra={<Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>添加单品</Button>}
+      />
+      <Card size="small" className="toolbar-card">
+        <Space wrap>
+          <Select
+            allowClear placeholder="按类目筛选" style={{ width: 140 }} value={catFilter || undefined}
+            onChange={(v) => setCatFilter(v ?? '')}
+            options={Object.entries(CATEGORY_MAP).map(([k, v]) => ({ value: k, label: v }))}
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            共 {filtered.length} 件单品{catFilter ? `（${CATEGORY_MAP[catFilter]}）` : ''}
+          </Typography.Text>
+        </Space>
+      </Card>
       {filtered.length === 0 && !loading ? (
-        <Empty description="衣橱空空如也，添加一件单品吧" />
+        <Card className="content-card"><Empty description="衣橱空空如也，添加一件单品吧">
+          <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>立即添加</Button>
+        </Empty></Card>
       ) : (
         <Row gutter={[12, 12]}>
           {filtered.map((item) => (

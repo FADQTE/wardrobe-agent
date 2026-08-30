@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  Button, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space,
+  Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space,
   Table, Tag, message,
 } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
+import PageHeader from '../components/PageHeader'
 import { Rule, listRules, offlineRule, publishRule, saveRule } from '../api'
 
 const STATUS_META: Record<string, { text: string; color: string }> = {
@@ -14,6 +15,12 @@ const STATUS_META: Record<string, { text: string; color: string }> = {
 }
 
 const expired = (r: Rule) => r.effectiveTo && dayjs(r.effectiveTo).isBefore(dayjs())
+
+// 生效时间列：ISO 串太长易换行，统一压成「MM-DD HH:mm ~ MM-DD HH:mm」
+const fmtSpan = (from?: string | null, to?: string | null) => {
+  const f = (v?: string | null) => (v ? dayjs(v).format('MM-DD HH:mm') : '-')
+  return `${f(from)} ~ ${f(to)}`
+}
 
 export default function RulesPage() {
   const [rules, setRules] = useState<Rule[]>([])
@@ -83,26 +90,31 @@ export default function RulesPage() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 12 }}>
-        <Select allowClear placeholder="类型" style={{ width: 120 }} value={typeFilter}
-          onChange={setTypeFilter}
-          options={[{ value: 'activity', label: '活动规则' }, { value: 'outfit', label: '穿搭规则' }]} />
-        <Select allowClear placeholder="状态" style={{ width: 120 }} value={statusFilter}
-          onChange={setStatusFilter}
-          options={[{ value: 'published', label: '已发布' }, { value: 'draft', label: '草稿' }, { value: 'offline', label: '已下线' }]} />
-        <span style={{ color: '#999' }}>
-          查询侧按当前时间窗过滤：过期/未生效/未发布的规则不会被 AI 客服召回
-        </span>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>新建规则</Button>
-      </Space>
-      <Table
+      <PageHeader
+        title="规则管理"
+        description="活动与穿搭规则的发布、下线和版本管理；查询侧按当前时间窗过滤，过期/未生效/未发布的规则不会被 AI 客服召回"
+        extra={<Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>新建规则</Button>}
+      />
+      <Card size="small" className="toolbar-card">
+        <Space wrap>
+          <Select allowClear placeholder="类型" style={{ width: 120 }} value={typeFilter}
+            onChange={setTypeFilter}
+            options={[{ value: 'activity', label: '活动规则' }, { value: 'outfit', label: '穿搭规则' }]} />
+          <Select allowClear placeholder="状态" style={{ width: 120 }} value={statusFilter}
+            onChange={setStatusFilter}
+            options={[{ value: 'published', label: '已发布' }, { value: 'draft', label: '草稿' }, { value: 'offline', label: '已下线' }]} />
+          <span style={{ color: '#999', fontSize: 12 }}>共 {rules.length} 条</span>
+        </Space>
+      </Card>
+      <Card size="small" className="content-card">
+        <Table
         rowKey="id" dataSource={rules} loading={loading} size="middle"
         columns={[
           { title: 'ID', dataIndex: 'id', width: 60 },
           { title: '标题', dataIndex: 'title', width: 200 },
           { title: '类型', dataIndex: 'type', width: 90, render: (t) => (t === 'activity' ? <Tag color="blue">活动</Tag> : <Tag color="purple">穿搭</Tag>) },
           { title: '版本', dataIndex: 'version', width: 60, render: (v) => `v${v}` },
-          { title: '生效时间', width: 150, render: (_, r) => `${r.effectiveFrom ?? '-'} ~ ${r.effectiveTo ?? '-'}` },
+          { title: '生效时间', width: 190, render: (_, r) => <span style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{fmtSpan(r.effectiveFrom, r.effectiveTo)}</span> },
           {
             title: '状态', width: 110, render: (_, r) => (
               <Space size={4}>
@@ -131,6 +143,7 @@ export default function RulesPage() {
           },
         ]}
       />
+      </Card>
 
       <Modal
         title={editing ? `编辑规则 #${editing.id}` : '新建规则'} open={modalOpen} width={560}

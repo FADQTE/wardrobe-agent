@@ -2,7 +2,7 @@
 // 阶段顺序 = 真实链路：安全边界 → 上下文 → 意图与编排 → 执行（工具/RAG） → 汇总与记忆
 import { useState } from 'react'
 import {
-  Alert, Badge, Button, Collapse, Empty, Progress, Space, Tag, Timeline, Tooltip, Typography,
+  Alert, Badge, Button, Collapse, Progress, Space, Tag, Timeline, Tooltip, Typography,
 } from 'antd'
 import { DownOutlined, QuestionCircleOutlined, UpOutlined } from '@ant-design/icons'
 
@@ -66,7 +66,8 @@ export default function PlanPanel({ data }: { data: PlanData }) {
   const dag = data.dag?.tasks?.length ? dagLevels(data.dag.tasks) : []
 
   const items = PHASES.map((phase) => {
-    let children: React.ReactNode = <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="本轮无此阶段数据" />
+    // 无数据阶段用紧凑一行文字，不放 Empty 大占位图（历史会话恢复时五阶段全空尤其难看）
+    let children: React.ReactNode = <span className="plan-empty">本轮无此阶段数据</span>
     let badge = 0
 
     if (phase.key === 'safety') {

@@ -327,3 +327,248 @@ body {
   padding: 6px 10px;
   border: 1px solid #d9d9d9;
 }
+
+/* ---------- 可观测页 Trace 事件流 ---------- */
+
+.trace-flow {
+  display: flex;
+  flex-direction: column;
+  max-height: 640px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.trace-item {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 7px 2px 9px;
+  border-bottom: 1px dashed #f0f0f0;
+}
+
+.trace-item:last-child {
+  border-bottom: none;
+}
+
+.trace-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.04);
+}
+
+.trace-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.trace-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trace-time {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: #bbb;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trace-headline {
+  margin-top: 3px;
+  color: #333;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.trace-msg {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.trace-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.trace-field {
+  display: flex;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.trace-k {
+  flex: 0 0 64px;
+  color: #999;
+}
+
+.trace-v {
+  flex: 1;
+  min-width: 0;
+  color: #555;
+  overflow-wrap: anywhere;
+}
+
+.trace-none {
+  color: #ccc;
+  font-size: 11px;
+  font-style: italic;
+}
+
+.trace-json {
+  max-height: 240px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  background: #f6f8fa;
+  border: 1px solid #eef0f3;
+  border-radius: 6px;
+  color: #47607c;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ---------- 全局页面框架 ---------- */
+
+.app-sider {
+  border-right: 1px solid #f0f0f0;
+}
+
+.app-sider .ant-menu {
+  border-inline-end: none;
+  padding: 4px 8px;
+  background: transparent;
+}
+
+.app-sider .ant-menu-item {
+  border-radius: 8px;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 16px 16px 12px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 9px;
+  color: #fff;
+  font-size: 15px;
+  background: linear-gradient(135deg, #1677ff, #722ed1);
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.3);
+}
+
+.brand-name {
+  color: #1f2329;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.sider-footer {
+  position: absolute;
+  bottom: 14px;
+  padding: 0 20px;
+  color: #c3c7cd;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.page-shell {
+  max-width: 1560px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.page-title {
+  margin: 0;
+  color: #1f2329;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.page-desc {
+  margin: 4px 0 0;
+  color: #8c8f94;
+  font-size: 13px;
+}
+
+.toolbar-card.ant-card {
+  margin-bottom: 14px;
+  border-radius: 10px;
+}
+
+.content-card.ant-card {
+  border-radius: 10px;
+}
+
+.app-sider {
+  position: relative;
+}
+
+.observe-intro.ant-collapse-ghost > .ant-collapse-item > .ant-collapse-header {
+  padding: 4px 0 8px;
+}
+
+.trace-layout {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.trace-sessions {
+  flex: 0 0 300px;
+  min-width: 0;
+}
+
+.trace-layout > .trace-sessions + * {
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid #f0f0f0;
+  padding-left: 16px;
+}
+
+@media (max-width: 1100px) {
+  .trace-layout {
+    flex-direction: column;
+  }
+
+  .trace-sessions {
+    flex: none;
+  }
+
+  .trace-layout > .trace-sessions + * {
+    border-left: none;
+    padding-left: 0;
+  }
+}
+
+.plan-empty {
+  display: block;
+  padding: 2px 0;
+  color: #c3c7cd;
+  font-size: 12px;
+}

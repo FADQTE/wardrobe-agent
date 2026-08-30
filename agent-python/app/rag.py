@@ -189,9 +189,11 @@ def _product_search_uncached(keyword: str, category: str, color: str, season: st
         filters.append({"range": {"price": {"lte": max_price}}})
 
     if not keyword:
+        # 注意：不能按 _id 排序——ES 8 默认禁用 _id fielddata（400）。
+        # 用 sales 降序 + price 升序做确定性排序，替代原来的 _id 决胜。
         response = _lexical_search(
             config.PRODUCT_INDEX, [], filters, size, offset=offset,
-            sort=[{"sales": {"order": "desc"}}, {"_id": {"order": "desc"}}],
+            sort=[{"sales": {"order": "desc"}}, {"price": {"order": "asc"}}],
         )
         hits = list(response["hits"]["hits"])
         products = []

@@ -1,19 +1,137 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
-  Alert, Button, Card, Col, Collapse, Empty, Row, Space, Statistic, Table, Tag,
-  Timeline, Typography,
+  Button, Card, Col, Collapse, Empty, Row, Space, Statistic, Table, Tag,
+  Typography,
 } from 'antd'
 import { ReloadOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import PageHeader from '../components/PageHeader'
 import { TraceEvent, TraceSession, getAgentHealth, getTrace, getTraceSessions, runEval } from '../api'
 
 const CATEGORY_META: Record<string, { label: string; color: string; desc: string }> = {
-  entry: { label: '入口', color: 'blue', desc: '请求身份与运行时信息（谁在什么页面问的）' },
+  entry: { label: '输入', color: 'blue', desc: '本轮入口：用户消息摘要与运行时通道' },
   fact: { label: '实时事实', color: 'cyan', desc: '工具调用与结果摘要——订单/库存/商品等不能靠模型猜' },
   knowledge: { label: '稳定知识', color: 'purple', desc: 'RAG 命中与引用——政策/规则必须有依据' },
   control: { label: '控制流', color: 'orange', desc: '意图路由/编排/降级/转人工——系统走了哪条路径' },
   result: { label: '结果', color: 'green', desc: '最终回答/搭配/生图结果——与工具和引用对账' },
   safety: { label: '安全', color: 'red', desc: '注入扫描/拒答/脱敏——安全边界是否守住' },
   cost: { label: '成本', color: 'gold', desc: '路径与 token 摘要——这轮为什么贵' },
+}
+
+const CATEGORY_COLOR: Record<string, string> = {
+  blue: '#1677ff', cyan: '#13c2c2', purple: '#722ed1', orange: '#fa8c16',
+  green: '#52c41a', red: '#ff4d4f', gold: '#faad14', default: '#d9d9d9',
+}
+
+const join = (v: unknown, fallback = ''): string | null => {
+  const s = Array.isArray(v) ? v.filter((x) => x !== null && x !== undefined).join('、') : ''
+  return s || fallback || null
+}
+
+/** 把事件 payload 翻译成「一句话摘要 + 关键字段行」，按事件类型分别渲染 */
+function summarize(e: TraceEvent): { headline: ReactNode; fields: [string, ReactNode][] } {
+  let p: any = {}
+  try { p = typeof e.payload === 'string' ? JSON.parse(e.payload) : (e.payload ?? {}) } catch { p = { raw: e.payload } }
+  const pair = (k: string, v: unknown): [string, ReactNode] | null => {
+    if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) return null
+    return [k, Array.isArray(v) ? join(v)! : String(v)]
+  }
+  switch (e.eventType) {
+    case 'entry':
+      return {
+        headline: <span className="trace-msg">「{p.message || '（空消息）'}」</span>,
+        fields: [pair('通道', p.transport), pair('会员等级', p.memberLevel)]
+          .filter(Boolean) as [string, ReactNode][],
+      }
+    case 'done':
+      return {
+        headline: <span className="trace-msg">{p.reply || '（空回复）'}</span>,
+        fields: [pair('耗时', p.latencyMs != null ? `${p.latencyMs} ms` : null)].filter(Boolean) as [string, ReactNode][],
+      }
+    case 'tool':
+      return {
+        headline: <span>{p.ok === false ? <Tag color="red">失败</Tag> : null}{p.summary || p.name}</span>,
+        fields: [pair('工具', p.name)].filter(Boolean) as [string, ReactNode][],
+      }
+    case 'rag': {
+      const fields: [string, ReactNode][] = []
+      const q = pair('查询', p.query); if (q) fields.push(q)
+      if (p.statusNotice) fields.push(['状态核验', <Tag color="gold" style={{ fontSize: 10 }}>{p.statusNotice.title} = {p.statusNotice.status}</Tag>])
+      const c = pair('引用', p.citations); if (c) fields.push(c)
+      return { headline: `ES 混合检索 · 命中 ${p.hits ?? 0} 条规则`, fields }
+    }
+    case 'plan':
+      return {
+        headline: p.summary || '意图规划',
+        fields: [
+          pair('置信度', p.confidence),
+          pair('任务链', (p.tasks || []).map((t: any) => (Array.isArray(t) ? t[0] : t?.type)).join(' → ')),
+        ].filter(Boolean) as [string, ReactNode][],
+      }
+    case 'product':
+      return {
+        headline: `${p.title || '商品检索'} · 命中 ${p.hits ?? 0}`,
+        fields: [pair('候选', p.names)].filter(Boolean) as [string, ReactNode][],
+      }
+    case 'outfit':
+      return {
+        headline: p.name || '搭配推荐',
+        fields: [pair('单品', p.items), pair('规则来源', p.ruleSources)].filter(Boolean) as [string, ReactNode][],
+      }
+    case 'image':
+      return {
+        headline: <span>生成「{p.label}」{p.isSimulation ? <Tag color="gold" style={{ fontSize: 10 }}>模拟预览</Tag> : null}</span>,
+        fields: [pair('provider', p.provider), pair('服饰', p.garments)].filter(Boolean) as [string, ReactNode][],
+      }
+    case 'memory':
+      return {
+        headline: '会话记忆更新',
+        fields: [
+          pair('已选单品', p.selected), pair('候选单品', p.candidates),
+          pair('澄清轮次', p.clarifyCount), pair('长期事实', p.longFacts),
+        ].filter(Boolean) as [string, ReactNode][],
+      }
+    case 'safety':
+      return {
+        headline: p.blocked ? <span style={{ color: '#cf1322' }}>已拦截：拒绝泄露系统信息</span> : '安全扫描通过',
+        fields: [pair('模式', p.mode), pair('拒答主题', p.refusedTopics)].filter(Boolean) as [string, ReactNode][],
+      }
+    case 'handoff':
+      return { headline: <span style={{ color: '#d46b08' }}>转人工：{p.reason}</span>, fields: [] }
+    case 'context':
+      return {
+        headline: `运行时上下文 ${p.items ?? 0} 项`,
+        fields: [pair('冲突', p.conflicts)].filter(Boolean) as [string, ReactNode][],
+      }
+    case 'error':
+      return { headline: <span style={{ color: '#cf1322' }}>{p.text || '执行异常'}</span>, fields: [] }
+    case 'status':
+      return { headline: p.text, fields: [] }
+    default: {
+      const fields = typeof p === 'object' && p !== null
+        ? Object.entries(p).map(([k, v]) => pair(k, v)).filter(Boolean) as [string, ReactNode][]
+        : []
+      return { headline: null, fields }
+    }
+  }
+}
+
+/** 按需展开的原始 JSON：默认收起，展开后限高滚动，不再撑出一条长块 */
+function PayloadDetails({ payload }: { payload: unknown }) {
+  const [open, setOpen] = useState(false)
+  const empty = payload == null || (typeof payload === 'object' && Object.keys(payload as object).length === 0)
+  if (empty) return null
+  return (
+    <div style={{ marginTop: 4 }}>
+      <a onClick={() => setOpen(!open)} style={{ fontSize: 11 }}>
+        {open ? '▾ 收起原始数据' : '▸ 原始数据'}
+      </a>
+      {open && (
+        <pre className="trace-json">
+          {typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)}
+        </pre>
+      )}
+    </div>
+  )
 }
 
 function TraceViewer() {
@@ -23,7 +141,12 @@ function TraceViewer() {
   const [loading, setLoading] = useState(false)
 
   const loadSessions = async () => {
-    try { setSessions(await getTraceSessions()) } catch { setSessions([]) }
+    try {
+      const list = await getTraceSessions()
+      setSessions(list)
+      // 默认选中最近一轮，右侧不落空
+      if (list.length) void loadEvents(list[0].sessionId)
+    } catch { setSessions([]) }
   }
   useEffect(() => { loadSessions() }, [])
 
@@ -34,65 +157,72 @@ function TraceViewer() {
     setLoading(false)
   }
 
-  const parse = (p: string) => {
-    try { return JSON.parse(p) } catch { return p }
-  }
-
   return (
     <Card
       title={<span>Trace 查看器 <Typography.Text type="secondary" style={{ fontWeight: 400, fontSize: 12 }}>
-        · 每轮决策的公开证据链：谁进来 → 走了哪条路径 → 查了什么事实/知识 → 结果与安全边界（不含系统提示词/CoT/隐私原文）</Typography.Text></span>}
+        · 每轮决策的公开证据链：输入 → 路径 → 事实/知识 → 输出与安全边界（不含系统提示词/CoT/隐私原文）</Typography.Text></span>}
       extra={<Button size="small" icon={<ReloadOutlined />} onClick={loadSessions}>刷新会话</Button>}
     >
-      <Row gutter={12}>
-        <Col span={8}>
+      <div className="trace-layout">
+        <div className="trace-sessions">
           <Table<TraceSession>
             size="small" rowKey="sessionId" dataSource={sessions} loading={!sessions.length}
-            pagination={false}
+            pagination={{ pageSize: 12, size: 'small', hideOnSinglePage: true }}
             onRow={(r) => ({ onClick: () => loadEvents(r.sessionId), style: { cursor: 'pointer' } })}
             rowClassName={(r) => (r.sessionId === sessionId ? 'ant-table-row-selected' : '')}
             columns={[
-              { title: '会话', dataIndex: 'sessionId', ellipsis: true },
-              { title: '事件数', dataIndex: 'eventCount', width: 70 },
+              {
+                title: '会话', dataIndex: 'sessionId', ellipsis: true,
+                render: (v: string) => <Typography.Text code style={{ fontSize: 11 }}>{v}</Typography.Text>,
+              },
+              { title: '事件', dataIndex: 'eventCount', width: 52, align: 'right' },
+              {
+                title: '最近', dataIndex: 'lastAt', width: 92,
+                render: (v: string) => <span style={{ fontSize: 11, color: '#999' }}>{new Date(v).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>,
+              },
             ]}
           />
-        </Col>
-        <Col span={16}>
+        </div>
+        <div className="trace-events">
           {events ? (
             events.length === 0 ? <Empty description="该会话暂无 Trace 记录" /> : (
-              <Timeline
-                items={events.map((e) => {
+              <div className="trace-flow">
+                {events.map((e) => {
                   const meta = CATEGORY_META[e.category] ?? { label: e.category, color: 'default', desc: '' }
-                  const payload = parse(e.payload)
-                  return {
-                    color: meta.color === 'red' ? 'red' : meta.color === 'green' ? 'green' : 'gray',
-                    children: (
-                      <div style={{ fontSize: 12 }}>
-                        <Space size={4}>
-                          <Tag color={meta.color} style={{ fontSize: 10 }}>{meta.label}</Tag>
-                          <Typography.Text code>{e.eventType}</Typography.Text>
-                          <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                            {new Date(e.createdAt).toLocaleTimeString('zh-CN')}
-                          </Typography.Text>
-                        </Space>
-                        <Collapse
-                          size="small" ghost items={[{
-                            key: String(e.id),
-                            label: <span style={{ fontSize: 11, color: '#999' }}>输入/输出明细</span>,
-                            children: <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: '#fafafa', padding: 6, borderRadius: 4, margin: 0 }}>
-                              {JSON.stringify(payload, null, 2)}
-                            </pre>,
-                          }]}
-                        />
+                  let payload: unknown = null
+                  try { payload = JSON.parse(e.payload) } catch { payload = e.payload }
+                  const { headline, fields } = summarize(e)
+                  return (
+                    <div key={e.id} className="trace-item">
+                      <span className="trace-dot" style={{ background: CATEGORY_COLOR[meta.color] ?? '#d9d9d9' }} />
+                      <div className="trace-body">
+                        <div className="trace-head">
+                          <Tag color={meta.color} style={{ fontSize: 10, lineHeight: '16px', marginInlineEnd: 6 }} title={meta.desc}>{meta.label}</Tag>
+                          <Typography.Text code style={{ fontSize: 11 }}>{e.eventType}</Typography.Text>
+                          <span className="trace-time">{new Date(e.createdAt).toLocaleTimeString('zh-CN')}</span>
+                        </div>
+                        {headline != null && <div className="trace-headline">{headline}</div>}
+                        {fields.length > 0 && (
+                          <div className="trace-fields">
+                            {fields.map(([k, v]) => (
+                              <div key={k} className="trace-field">
+                                <span className="trace-k">{k}</span>
+                                <span className="trace-v">{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {!headline && fields.length === 0 && <span className="trace-none">（无载荷）</span>}
+                        <PayloadDetails payload={payload} />
                       </div>
-                    ),
-                  }
+                    </div>
+                  )
                 })}
-              />
+              </div>
             )
-          ) : <Empty description="点击左侧会话查看事件流" />}
-        </Col>
-      </Row>
+          ) : <Empty description="加载中…" />}
+        </div>
+      </div>
     </Card>
   )
 }
@@ -137,7 +267,7 @@ function EvalRunner() {
                 <div style={{ fontSize: 12 }}>
                   <div><Typography.Text strong>输入（用户消息）：</Typography.Text>「{c.message}」</div>
                   <div style={{ marginTop: 4 }}><Typography.Text strong>输出证据：</Typography.Text></div>
-                  <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', background: '#fafafa', padding: 6, borderRadius: 4 }}>
+                  <pre className="trace-json">
                     {JSON.stringify(c.evidence, null, 2)}
                   </pre>
                 </div>
@@ -155,19 +285,25 @@ export default function ObservePage() {
   useEffect(() => { getAgentHealth().then(setHealth).catch(() => setHealth(null)) }, [])
 
   return (
-    <div style={{ maxWidth: 1200 }}>
-      <Alert
-        type="info" showIcon style={{ marginBottom: 12 }}
-        message="为什么需要可观测性？"
-        description={
-          <div style={{ fontSize: 12 }}>
-            一个可交付的 Agent 不能只回答得"像人"，还要能证明它按边界工作：实时事实走工具、稳定知识带引用、
-            高风险动作有安全边界、每轮路径可复盘。Trace 是证据（发生了什么），Eval 是回归（改动后没坏），
-            成本是治理（哪条路径贵）。改 Prompt/RAG/工具后先跑一遍评测再上线。
-          </div>
-        }
+    <div>
+      <PageHeader
+        title="可观测"
+        description="Trace 是证据（发生了什么），Eval 是回归（改动后没坏）——每轮决策的输入、路径、事实/知识与输出都可复盘"
       />
-      <Card title="模型与基础设施配置（agent-python/.env）" size="small" style={{ marginBottom: 12 }}>
+      <Collapse
+        size="small" ghost className="observe-intro"
+        items={[{
+          key: 'why',
+          label: <span style={{ fontSize: 12, color: '#1677ff' }}>为什么需要可观测性？一个可交付的 Agent 还要能证明它按边界工作</span>,
+          children: (
+            <div style={{ fontSize: 12, color: '#666' }}>
+              实时事实走工具、稳定知识带引用、高风险动作有安全边界、每轮路径可复盘。
+              改 Prompt/RAG/工具后先跑一遍回归评测再上线。
+            </div>
+          ),
+        }]}
+      />
+      <Card title="模型与基础设施配置（agent-python/.env）" size="small" className="content-card" style={{ marginBottom: 12 }}>
         <Row gutter={16}>
           <Col span={5}><Statistic title="当前 LLM" value={health?.llm ?? '未知'} valueStyle={{ fontSize: 15 }} /></Col>
           <Col span={4}><Statistic title="模式" value={health?.mockAgent ? 'Mock' : '真实模型'} valueStyle={{ fontSize: 15, color: health?.mockAgent ? '#d46b08' : '#3f8600' }} /></Col>

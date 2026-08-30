@@ -8,6 +8,7 @@ import {
   SearchOutlined, ShoppingCartOutlined, StarFilled,
 } from '@ant-design/icons'
 import { useUser } from '../App'
+import PageHeader from '../components/PageHeader'
 import {
   AfterSale, Order, OrderDetail, Product, addFavorite, applyAfterSale, cancelOrder,
   createOrder, esSearchProducts, getOrderDetail, listFavorites, listOrders, payOrder,
@@ -261,7 +262,11 @@ export default function MallPage() {
 
   return (
     <div>
-      <Card size="small" style={{ marginBottom: 12 }}>
+      <PageHeader
+        title="服饰商城"
+        description="Elasticsearch 混合检索（BM25 + 向量 + 重排），MySQL 兜底；支持收藏、购物车、下单与售后"
+      />
+      <Card size="small" className="toolbar-card">
         <Space wrap>
           <Input.Search
             placeholder="搜索商品，如：白色衬衫" allowClear style={{ width: 260 }}
