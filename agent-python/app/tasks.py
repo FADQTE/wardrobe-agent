@@ -565,8 +565,20 @@ async def _after_sale_apply(task, ctx, events) -> dict:
     order_raw = await call_tool("queryOrder", {"userId": ctx["user_id"], "orderNo": order_no})
     order = json.loads(order_raw) if isinstance(order_raw, str) else order_raw
     sale_type = "refund" if order.get("status") == "paid" else "return_refund"
-    raw = await call_tool("applyAfterSale", {
-        "userId": ctx["user_id"], "orderNo": order_no, "type": sale_type})
+    try:
+        raw = await call_tool("applyAfterSale", {
+            "userId": ctx["user_id"], "orderNo": order_no, "type": sale_type})
+    except Exception as e:
+        # 业务类拒绝（待支付无需退款/已取消订单）是给用户的明确指引，不是系统故障：
+        # 如实转述并给下一步建议，而不是笼统转人工
+        note = str(e)
+        if "无需退款" in note or "已取消订单" in note:
+            events.append(_tool_event("applyAfterSale", {"orderNo": order_no}, True, note))
+            return {"task_id": task["id"], "type": "aftersale", "ok": True,
+                    "data": {"action": "apply", "orderNo": order_no,
+                             "businessNote": note, "verified": False},
+                    "events": events}
+        raise
     applied = json.loads(raw) if isinstance(raw, str) else raw
     request_no = (applied or {}).get("requestNo") or ""
     # 产物验证：回查售后记录，确认申请单真实存在

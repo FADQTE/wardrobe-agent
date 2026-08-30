@@ -93,6 +93,21 @@ public class OrderService {
         return orderMapper.selectById(orderId);
     }
 
+    public static final String REFUNDED = "refunded";
+
+    /** 售后审核通过的退款效果：订单置为已退款并恢复库存（幂等）。 */
+    @Transactional
+    public MallOrder markRefunded(Long orderId) {
+        MallOrder order = orderMapper.selectById(orderId);
+        if (order == null) throw new BizException(404, "订单不存在");
+        if (REFUNDED.equals(order.getStatus())) return order;
+        if (CANCELLED.equals(order.getStatus())) throw new BizException(409, "订单已取消，无需退款");
+        order.setStatus(REFUNDED);
+        orderMapper.updateById(order);
+        items(orderId).forEach(item -> productService.restoreStock(item.getProductId(), item.getQuantity()));
+        return order;
+    }
+
     public MallOrder cancel(Long orderId) {
         MallOrder order = transit(orderId, PENDING, CANCELLED, "仅待支付订单可取消");
         items(orderId).forEach(item -> productService.restoreStock(item.getProductId(), item.getQuantity()));

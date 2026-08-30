@@ -311,24 +311,7 @@ export const updateCartLine = (userId: number, id: number, quantity: number) =>
 export const removeCartLine = (userId: number, id: number) =>
   api<void>(`/api/cart/${id}?userId=${userId}`, { method: 'DELETE' })
 
-// ---- 人工客服工作台（管理密钥鉴权） ----
-export const ADMIN_KEY_STORE = 'app_admin_key'
-export const getAdminKey = () => localStorage.getItem(ADMIN_KEY_STORE) || ''
-export const saveAdminKey = (key: string) => localStorage.setItem(ADMIN_KEY_STORE, key)
-
-async function adminApi<T = any>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Internal-Api-Key': getAdminKey(),
-      ...(options.headers ?? {}),
-    },
-  })
-  const body = await res.json().catch(() => null)
-  if (!res.ok || body?.code !== 0) throw new Error(body?.msg || `HTTP ${res.status}`)
-  return body.data as T
-}
+// ---- 人工客服工作台（登录态鉴权） ----
 
 export interface AfterSaleRecord {
   id: number
@@ -350,11 +333,11 @@ export interface AfterSaleRow {
 }
 
 export const adminListAfterSales = (status: string) =>
-  adminApi<AfterSaleRow[]>(`/admin/aftersales?status=${encodeURIComponent(status)}`)
+  api<AfterSaleRow[]>(`/admin/aftersales?status=${encodeURIComponent(status)}`)
 
 export const adminReviewAfterSale = (
   id: number, action: 'approve' | 'reject', reason: string,
-) => adminApi<AfterSaleRecord>(`/admin/aftersales/${id}/${action}`, {
+) => api<AfterSaleRecord>(`/admin/aftersales/${id}/${action}`, {
   method: 'POST',
   body: JSON.stringify({ reason }),
 })

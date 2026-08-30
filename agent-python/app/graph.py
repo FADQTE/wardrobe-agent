@@ -283,7 +283,7 @@ def _compose_activity_list(state: AgentState) -> str | None:
 
 ORDER_STATUS_CN = {
     "pending": "待支付", "paid": "已支付，待发货", "shipped": "已发货",
-    "done": "已完成", "cancelled": "已取消",
+    "done": "已完成", "cancelled": "已取消", "refunded": "已退款",
 }
 
 
@@ -342,6 +342,9 @@ def _compose_commerce_support(state: AgentState) -> str | None:
     if aftersale_results:
         data = aftersale_results[0]["data"]
         if data.get("action") == "apply":
+            if data.get("businessNote"):
+                return (f"订单 `{data.get('orderNo')}` 暂时不能申请售后：{data.get('businessNote')}。" + chr(10) * 2
+                        + "待支付订单直接在 **商城 → 我的订单** 里取消即可；已支付/已发货的订单我才能帮你申请退款。")
             if data.get("needsOrderNo"):
                 orders = data.get("orders", [])
                 if not orders:

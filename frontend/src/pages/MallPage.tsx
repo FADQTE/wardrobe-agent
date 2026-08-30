@@ -36,6 +36,7 @@ const ORDER_STATUS: Record<string, { text: string; color: string }> = {
   shipped: { text: '已发货', color: 'geekblue' },
   done: { text: '已完成', color: 'green' },
   cancelled: { text: '已取消', color: 'default' },
+  refunded: { text: '已退款', color: 'purple' },
 }
 
 const AFTER_SALE_STATUS: Record<string, { text: string; color: string }> = {

@@ -2,12 +2,9 @@ import { useEffect, useState } from 'react'
 import {
   Button, Card, Empty, Input, Modal, Space, Table, Tag, Typography, message,
 } from 'antd'
-import { KeyOutlined, ReloadOutlined } from '@ant-design/icons'
+import { ReloadOutlined } from '@ant-design/icons'
 import PageHeader from '../components/PageHeader'
-import {
-  AfterSaleRow, ADMIN_KEY_STORE, adminListAfterSales, adminReviewAfterSale,
-  getAdminKey, saveAdminKey,
-} from '../api'
+import { AfterSaleRow, adminListAfterSales, adminReviewAfterSale } from '../api'
 
 const STATUS_TABS = [
   { value: 'pending', label: '待人工审核' },
@@ -29,8 +26,6 @@ const REVIEW_SOURCE: Record<string, { text: string; color: string }> = {
 }
 
 export default function AdminPage() {
-  const [keyReady, setKeyReady] = useState(!!getAdminKey())
-  const [keyInput, setKeyInput] = useState('')
   const [status, setStatus] = useState('pending')
   const [rows, setRows] = useState<AfterSaleRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -40,22 +35,14 @@ export default function AdminPage() {
     try {
       setRows(await adminListAfterSales(status))
     } catch (e: any) {
-      message.error(e.message || '加载失败（检查管理密钥）')
+      message.error(e.message || '加载失败')
       setRows([])
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => {
-    if (keyReady) void load()
-  }, [keyReady, status])
-
-  const submitKey = () => {
-    if (!keyInput.trim()) return
-    saveAdminKey(keyInput.trim())
-    setKeyReady(true)
-  }
+  useEffect(() => { void load() }, [status])
 
   const review = async (row: AfterSaleRow, action: 'approve' | 'reject') => {
     let reason = ''
@@ -72,37 +59,13 @@ export default function AdminPage() {
       onOk: async () => {
         try {
           await adminReviewAfterSale(row.sale.id, action, reason)
-          message.success(action === 'approve' ? '已通过' : '已驳回')
+          message.success(action === 'approve' ? '已通过，退款已执行' : '已驳回')
           await load()
         } catch (e: any) {
           message.error(e.message || '操作失败')
         }
       },
     })
-  }
-
-  if (!keyReady) {
-    return (
-      <div className="page-shell" style={{ maxWidth: 520 }}>
-        <PageHeader title="人工客服工作台" description="处理 AI 转人工的退款/售后申请（管理密钥鉴权）" />
-        <Card size="small" className="content-card">
-          <Space.Compact style={{ width: '100%' }}>
-            <Input
-              prefix={<KeyOutlined />}
-              placeholder="输入管理密钥（APP_INTERNAL_API_KEY）"
-              value={keyInput}
-              type="password"
-              onChange={(e) => setKeyInput(e.target.value)}
-              onPressEnter={submitKey}
-            />
-            <Button type="primary" onClick={submitKey}>进入</Button>
-          </Space.Compact>
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 10, marginBottom: 0 }}>
-            密钥与后端 APP_INTERNAL_API_KEY 一致（本地默认 local-internal-key），仅保存在本浏览器。
-          </Typography.Paragraph>
-        </Card>
-      </div>
-    )
   }
 
   return (

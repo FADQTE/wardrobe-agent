@@ -102,6 +102,7 @@ public class AfterSaleService {
             sale.setReviewSource("auto");
             sale.setReviewReason("符合自动退款规则：类型与订单状态匹配，金额 ¥"
                     + sale.getAmount() + " ≤ 上限 ¥" + AUTO_REFUND_LIMIT + "，系统自动通过");
+            executeRefundEffect(sale);
         } else {
             sale.setReviewSource("manual");
             String why = typeMatches
@@ -121,14 +122,28 @@ public class AfterSaleService {
         return afterSaleMapper.selectList(query);
     }
 
-    /** 人工客服：通过（仅 pending 可操作），记录人工结论。 */
+    /** 人工客服：通过（仅 pending 可操作），记录人工结论并执行退款效果。 */
     public AfterSale approve(Long id, String reason) {
         AfterSale sale = requirePending(id);
         sale.setStatus(APPROVED);
         sale.setReviewSource("manual");
         sale.setReviewReason("人工审核通过" + (StringUtils.hasText(reason) ? "：" + reason.trim() : ""));
         afterSaleMapper.updateById(sale);
+        executeRefundEffect(sale);
         return sale;
+    }
+
+    /** 退款落地：审核通过即改订单状态为已退款并恢复库存（换货除外），杜绝「说退了但订单没变化」。 */
+    private void executeRefundEffect(AfterSale sale) {
+        if ("exchange".equals(sale.getType())) {
+            return;
+        }
+        try {
+            orderService.markRefunded(sale.getOrderId());
+        } catch (Exception e) {
+            // 退款效果失败不吞掉审核结果，但要把异常暴露给调用链（人工重试/AI 如实转述）
+            throw new BizException(500, "退款执行失败：" + e.getMessage());
+        }
     }
 
     /** 人工客服：驳回（仅 pending 可操作）。 */
