@@ -19,6 +19,7 @@ app.include_router(router)
 @app.get("/health")
 async def health():
     from . import config
+    from . import rerank as rerank_mod
     from .es_client import get_es
     return {
         "status": "ok",
@@ -28,4 +29,10 @@ async def health():
         "llmBaseUrl": config.LLM_BASE_URL,
         "es": get_es().ping(),
         "embedding": config.EMBEDDING_MODE,
+        "embeddingModel": config.EMBEDDING_MODEL,
+        "rerank": {
+            "enabled": config.RERANK_ENABLED,
+            "model": config.RERANK_MODEL,
+            "state": rerank_mod.status(),
+        },
     }

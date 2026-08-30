@@ -159,10 +159,18 @@ async def product_search(
     season: str = Query(""), style: str = Query(""), maxPrice: float | None = Query(None),
     page: int = Query(1), size: int = Query(24),
 ):
-    """商城页 ES 混合检索（BM25 + 向量 + 标签过滤）。"""
+    """商城页 ES 混合检索（BM25 + 向量 + 标签过滤）+ Reranker 重排。"""
+    candidate_size = config.RERANK_TOP_N if (config.RERANK_ENABLED and keyword) else size
     result = rag.hybrid_product_search(
         keyword=keyword, category=category, color=color, season=season,
-        style=style, max_price=maxPrice, page=page, size=size)
+        style=style, max_price=maxPrice, page=page, size=candidate_size)
+    if config.RERANK_ENABLED and keyword and len(result["products"]) > 1:
+        from . import rerank as rerank_mod
+        result["products"] = await rerank_mod.rerank(
+            keyword,
+            [p | {"text": f"{p.get('name', '')} {p.get('detail', '')}"} for p in result["products"]],
+            top_k=size)
+        result["reranked"] = True
     return {"code": 0, "msg": "ok", "data": result}
 
 

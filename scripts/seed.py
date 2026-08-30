@@ -290,6 +290,18 @@ def make_embedder():
     mode = os.getenv("EMBEDDING_MODE", "none")
     if mode == "none":
         return None
+    if mode == "ollama":
+        import httpx
+        model = os.getenv("EMBEDDING_MODEL", "qwen3-embedding:0.6b")
+        url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        print(f"[embed] using ollama model={model}")
+
+        def embed_ollama(texts):
+            r = httpx.post(f"{url}/api/embed", json={"model": model, "input": texts}, timeout=120)
+            r.raise_for_status()
+            return r.json()["embeddings"]
+
+        return embed_ollama
     if mode == "api":
         try:
             from openai import OpenAI
@@ -304,7 +316,7 @@ def make_embedder():
         except Exception as e:
             print(f"[embed] api unavailable: {e}; fallback to no-vector")
             return None
-    print("[embed] mode=local 未安装 sentence-transformers，降级无向量")
+    print("[embed] unknown mode, fallback to no-vector")
     return None
 
 
@@ -375,6 +387,13 @@ def seed_mysql(products, rules):
 
 def seed_es(products, product_ids, rules, embedder):
     es = get_es()
+    # 探测 embedding 可用性：模型未就绪/服务不可达 → 本次不建向量索引（降级 BM25）
+    if embedder is not None:
+        try:
+            embedder(["探测"])
+        except Exception as e:
+            print(f"[embed] 探测失败，本次跳过向量索引（稍后拉取模型并重跑 seed 即可补向量）: {e}")
+            embedder = None
     with_vector = embedder is not None
     ensure_indices(es, with_vector)
 
@@ -398,11 +417,14 @@ def seed_es(products, product_ids, rules, embedder):
     if embedder:
         texts = [d["name"] + " " + d["detail"] for d in docs]
         vecs = []
-        for i in range(0, len(texts), 32):
-            vecs.extend(embedder(texts[i:i + 32]))
-            print(f"[embed] products {min(i + 32, len(texts))}/{len(texts)}")
-        for d, v in zip(docs, vecs):
-            d["embedding"] = v
+        try:
+            for i in range(0, len(texts), 32):
+                vecs.extend(embedder(texts[i:i + 32]))
+                print(f"[embed] products {min(i + 32, len(texts))}/{len(texts)}")
+            for d, v in zip(docs, vecs):
+                d["embedding"] = v
+        except Exception as e:
+            print(f"[embed] 向量化失败，降级为无向量索引（稍后可重跑 seed 补向量）: {e}")
     bulk_docs(PRODUCT_INDEX, docs)
 
     # 规则文档
@@ -417,10 +439,13 @@ def seed_es(products, product_ids, rules, embedder):
     if embedder:
         texts = [d["title"] + " " + d["content"] for d in docs]
         vecs = []
-        for i in range(0, len(texts), 32):
-            vecs.extend(embedder(texts[i:i + 32]))
-        for d, v in zip(docs, vecs):
-            d["embedding"] = v
+        try:
+            for i in range(0, len(texts), 32):
+                vecs.extend(embedder(texts[i:i + 32]))
+            for d, v in zip(docs, vecs):
+                d["embedding"] = v
+        except Exception as e:
+            print(f"[embed] 规则向量化失败，降级为无向量索引: {e}")
     bulk_docs(RULE_INDEX, docs)
 
     # 换装结果占位图

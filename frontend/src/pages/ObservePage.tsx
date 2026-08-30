@@ -169,15 +169,17 @@ export default function ObservePage() {
       />
       <Card title="模型与基础设施配置（agent-python/.env）" size="small" style={{ marginBottom: 12 }}>
         <Row gutter={16}>
-          <Col span={6}><Statistic title="当前 LLM" value={health?.llm ?? '未知'} valueStyle={{ fontSize: 16 }} /></Col>
-          <Col span={6}><Statistic title="模式" value={health?.mockAgent ? 'Mock 脚本（未配 Key）' : '真实模型'} valueStyle={{ fontSize: 16, color: health?.mockAgent ? '#d46b08' : '#3f8600' }} /></Col>
-          <Col span={6}><Statistic title="Embedding" value={health?.embedding ?? '未知'} valueStyle={{ fontSize: 16 }} /></Col>
-          <Col span={6}><Statistic title="ES" value={health?.es ? '已连接' : '不可用'} valueStyle={{ fontSize: 16, color: health?.es ? '#3f8600' : '#cf1322' }} /></Col>
+          <Col span={5}><Statistic title="当前 LLM" value={health?.llm ?? '未知'} valueStyle={{ fontSize: 15 }} /></Col>
+          <Col span={4}><Statistic title="模式" value={health?.mockAgent ? 'Mock' : '真实模型'} valueStyle={{ fontSize: 15, color: health?.mockAgent ? '#d46b08' : '#3f8600' }} /></Col>
+          <Col span={6}><Statistic title="Embedding" value={health?.embedding === 'none' ? 'none（纯BM25）' : `${health?.embeddingModel ?? ''}`} valueStyle={{ fontSize: 13 }} /></Col>
+          <Col span={5}><Statistic title="Reranker" value={health?.rerank?.enabled ? (health.rerank.state === 'ready' ? '已就绪' : health.rerank.state ?? '待加载') : '关闭'} valueStyle={{ fontSize: 13, color: health?.rerank?.enabled && health?.rerank?.state === 'ready' ? '#3f8600' : '#999' }} /></Col>
+          <Col span={4}><Statistic title="ES" value={health?.es ? '已连接' : '不可用'} valueStyle={{ fontSize: 15, color: health?.es ? '#3f8600' : '#cf1322' }} /></Col>
         </Row>
         <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
           接入真实模型：编辑 agent-python/.env → LLM_BASE_URL / LLM_API_KEY / LLM_MODEL（OpenAI 兼容：DeepSeek/通义/Kimi/Ollama），
-          MOCK_AGENT 改 false → 重启 Agent。Embedding 可选：none=纯 BM25；api=需支持 embedding 的服务（如通义 text-embedding-v3），
-          改完后重跑 scripts/seed.py 重建索引。详细步骤见 docs/README.md。
+          MOCK_AGENT 改 false → 重启 Agent。本地向量检索：EMBEDDING_MODE=ollama + docker compose --profile ollama up -d +
+          拉取 qwen3-embedding:0.6b，重跑 scripts/seed.py 重建索引。Reranker 在代码内本地部署（Qwen3-Reranker-0.6B，
+          首次自动从 ModelScope 下载，Ollama 不支持 rerank）。详细步骤见 docs/README.md。
         </Typography.Paragraph>
       </Card>
       <Space direction="vertical" size={12} style={{ width: '100%' }}>

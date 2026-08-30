@@ -89,8 +89,19 @@ async def do_rag(task, state, memory, rule_type=None) -> dict:
     stage = "rule_query" if rule_type else "rag"
     events = [_status_event("检索穿搭/活动规则（ES 混合检索 + 时间窗过滤）…", stage)]
     try:
+        # rerank 开启时多召回候选，再重排收敛
+        candidate_size = config.RERANK_TOP_N if (config.RERANK_ENABLED and query) else 6
         rules = rag.hybrid_rule_search(query, tags=tags, rule_type=rule_type,
-                                       only_time_valid=True, fallback_all=(rule_type == "activity"))
+                                       only_time_valid=True, fallback_all=(rule_type == "activity"),
+                                       size=candidate_size)
+        if config.RERANK_ENABLED and query and len(rules) > 1:
+            from . import rerank as rerank_mod
+            rules = await rerank_mod.rerank(
+                query,
+                [r | {"text": f"{r.get('title', '')} {r.get('content', '')}"} for r in rules],
+                top_k=6)
+            events.append(_tool_event("rerank", {"query": query, "topK": len(rules)}, True,
+                                      f"Reranker 重排 Top{len(rules)}（Qwen3-Reranker 本地部署）"))
         events.append({"type": "rag", "data": {"rules": rules, "query": query}})
         events.append(_tool_event("hybrid_rule_search", {"query": query, "tags": tags, "type": rule_type},
                                   True, f"召回 {len(rules)} 条有效规则（已过滤过期/未生效/未发布）"))
@@ -105,14 +116,24 @@ async def do_rag(task, state, memory, rule_type=None) -> dict:
 
 async def do_product(task, state, memory) -> dict:
     params = task.get("params", {})
+    keyword = params.get("keyword") or ""
     events = [_status_event("检索商城在售商品（ES 双索引 · 混合检索）…", "product")]
     try:
+        candidate_size = config.RERANK_TOP_N if (config.RERANK_ENABLED and keyword) else 6
         result = rag.hybrid_product_search(
-            keyword=params.get("keyword") or "", category=params.get("category") or "",
+            keyword=keyword, category=params.get("category") or "",
             color=params.get("color") or "", season=params.get("season") or "",
             style=params.get("style") or "", max_price=params.get("maxPrice"),
-            page=1, size=6)
+            page=1, size=candidate_size)
         products = result["products"]
+        if config.RERANK_ENABLED and keyword and len(products) > 1:
+            from . import rerank as rerank_mod
+            products = await rerank_mod.rerank(
+                keyword,
+                [p | {"text": f"{p.get('name', '')} {p.get('detail', '')}"} for p in products],
+                top_k=6)
+            events.append(_tool_event("rerank", {"keyword": keyword, "topK": len(products)}, True,
+                                      f"Reranker 重排 Top{len(products)}"))
         events.append(_tool_event("hybrid_product_search", params, True,
                                   f"商城命中 {result['total']} 件，展示 Top{len(products)}"))
         if products:

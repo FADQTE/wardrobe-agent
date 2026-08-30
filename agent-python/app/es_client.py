@@ -25,6 +25,17 @@ class EsClient:
         """按配置生成向量；不可用返回 None（降级纯 BM25）。"""
         if config.EMBEDDING_MODE == "none":
             return None
+        if config.EMBEDDING_MODE == "ollama":
+            try:
+                import httpx
+                resp = httpx.post(f"{config.OLLAMA_URL}/api/embed",
+                                  json={"model": config.EMBEDDING_MODEL, "input": texts},
+                                  timeout=120)
+                resp.raise_for_status()
+                return resp.json()["embeddings"]
+            except Exception as e:
+                print(f"[embed] ollama failed: {e}", flush=True)
+                return None
         if config.EMBEDDING_MODE == "api":
             try:
                 if self._embedding_client is None:
@@ -36,9 +47,8 @@ class EsClient:
                     model=config.EMBEDDING_MODEL, input=texts)
                 return [r.embedding for r in resp.data]
             except Exception as e:
-                print(f"[embed] api failed: {e}")
+                print(f"[embed] api failed: {e}", flush=True)
                 return None
-        # local 模式未安装 sentence-transformers
         return None
 
     @property

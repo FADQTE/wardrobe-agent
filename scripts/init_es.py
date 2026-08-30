@@ -41,8 +41,9 @@ def _product_mapping(with_vector: bool):
         "image_url": {"type": "keyword", "index": False},
     }
     if with_vector:
+        # ES 8: dense_vector 需 indexed 才能指定 similarity（kNN/script_score 均可检索）
         props["embedding"] = {"type": "dense_vector", "dims": EMBEDDING_DIM,
-                              "index": False, "similarity": "cosine"}
+                              "index": True, "similarity": "cosine"}
     return {
         "settings": {"number_of_shards": 1, "number_of_replicas": 0},
         "mappings": {"properties": props},
@@ -63,7 +64,7 @@ def _rule_mapping(with_vector: bool):
     }
     if with_vector:
         props["embedding"] = {"type": "dense_vector", "dims": EMBEDDING_DIM,
-                              "index": False, "similarity": "cosine"}
+                              "index": True, "similarity": "cosine"}
     return {
         "settings": {"number_of_shards": 1, "number_of_replicas": 0},
         "mappings": {"properties": props},

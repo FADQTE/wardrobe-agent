@@ -97,6 +97,12 @@ frontend/public/seed-images/
 .piptest/
 # pnpm 元数据缓存（工作区内）
 .pnpm-cache/
+# 本地 reranker 模型权重（ModelScope 下载，较大）
+agent-python/.models/
+# uv 缓存与 Python 安装目录（D 盘本地）
+.uv-cache/
+.uv-python/
+# 旧 requirements.txt 已由 pyproject.toml + uv.lock 取代（见 agent-python/）
 
 
 xiaozhe-agent/
