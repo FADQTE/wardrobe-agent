@@ -182,7 +182,7 @@ async def do_image(task, state, memory, ctx) -> dict:
     events = [_status_event("创建换装任务（统一管理输入/状态/结果地址）…", "image")]
     task_id = None
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with httpx.AsyncClient(timeout=10, headers=config.JAVA_INTERNAL_HEADERS) as c:
             r = await c.post(f"{config.JAVA_API_URL}/tryon", json={
                 "sessionId": ctx["session_id"], "userId": ctx["user_id"],
                 "garmentIds": json.dumps(params.get("garmentIds") or []),
@@ -199,7 +199,7 @@ async def do_image(task, state, memory, ctx) -> dict:
         if not task_id:
             return
         try:
-            async with httpx.AsyncClient(timeout=10) as c:
+            async with httpx.AsyncClient(timeout=10, headers=config.JAVA_INTERNAL_HEADERS) as c:
                 await c.post(f"{config.JAVA_API_URL}/tryon/{task_id}/status", json={
                     "status": status, "resultUrl": result_url, "errorMsg": error_msg,
                 })

@@ -67,7 +67,7 @@ class TraceRecorder:
 
     async def _push(self, event_type: str, category: str, payload: dict):
         try:
-            async with httpx.AsyncClient(timeout=5) as c:
+            async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
                 await c.post(f"{config.JAVA_API_URL}/internal/trace", json={
                     "sessionId": self.session_id, "eventType": event_type,
                     "category": category, "payload": payload,

@@ -6,6 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -28,6 +30,9 @@ public class ChatRelayService {
     @Value("${chaoyin.agent-url:http://localhost:8000}")
     private String agentUrl;
 
+    @Value("${chaoyin.internal-api-key:chaoyin-dev-internal-key}")
+    private String internalApiKey;
+
     public ChatRelayService(RestTemplate restTemplate, WsSessionRegistry registry) {
         this.restTemplate = restTemplate;
         this.registry = registry;
@@ -39,7 +44,10 @@ public class ChatRelayService {
                 Map<String, Object> body = Map.of(
                         "session_id", sessionId, "user_id", userId,
                         "message", message, "transport", "ws");
-                String resp = restTemplate.postForObject(agentUrl + "/api/chat", body, String.class);
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("X-Internal-Api-Key", internalApiKey);
+                String resp = restTemplate.postForObject(
+                        agentUrl + "/api/chat", new HttpEntity<>(body, headers), String.class);
                 if (resp == null) {
                     return;
                 }

@@ -37,7 +37,7 @@ async def repair_rule_index_on_startup():
             print("[startup] rule fullsync skipped: Java/ES still unavailable", flush=True)
         # 记忆遗忘：启动时归档陈旧低强度记忆（用户明确高置信记忆天然豁免）
         try:
-            async with httpx.AsyncClient(timeout=5) as c:
+            async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
                 r = await c.post(f"{config.JAVA_API_URL}/memory/decay",
                                  params={"staleDays": 30})
                 if r.status_code == 200:

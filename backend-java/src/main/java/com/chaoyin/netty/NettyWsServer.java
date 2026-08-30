@@ -13,6 +13,8 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import com.chaoyin.service.AuthService;
+import com.chaoyin.service.ChatSessionService;
 
 /**
  * Netty NIO WebSocket 推送网关（独立端口 8090，与 Tomcat 8080 分离）：
@@ -24,6 +26,8 @@ public class NettyWsServer {
 
     private final WsSessionRegistry registry;
     private final ChatRelayService relay;
+    private final AuthService authService;
+    private final ChatSessionService chatSessionService;
 
     @Value("${chaoyin.netty.port:8090}")
     private int port;
@@ -32,9 +36,12 @@ public class NettyWsServer {
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
 
-    public NettyWsServer(WsSessionRegistry registry, ChatRelayService relay) {
+    public NettyWsServer(WsSessionRegistry registry, ChatRelayService relay,
+                         AuthService authService, ChatSessionService chatSessionService) {
         this.registry = registry;
         this.relay = relay;
+        this.authService = authService;
+        this.chatSessionService = chatSessionService;
     }
 
     @PostConstruct
@@ -55,7 +62,7 @@ public class NettyWsServer {
                                     .addLast(new HttpObjectAggregator(8192))
                                     // 90s 无任何帧（心跳会重置）判定为死连接
                                     .addLast(new IdleStateHandler(0, 0, 90))
-                                    .addLast(new WsFrameHandler(registry, relay));
+                                    .addLast(new WsFrameHandler(registry, relay, authService, chatSessionService));
                         }
                     });
             serverChannel = bootstrap.bind(port).sync().channel();

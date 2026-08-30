@@ -43,9 +43,9 @@ class SessionMemory:
 
     async def load(self):
         try:
-            async with httpx.AsyncClient(timeout=5) as c:
-                state_req = c.get(f"{config.JAVA_API_URL}/chat/sessions/{self.session_id}")
-                messages_req = c.get(f"{config.JAVA_API_URL}/chat/sessions/{self.session_id}/messages",
+            async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
+                state_req = c.get(f"{config.JAVA_API_URL}/internal/chat/sessions/{self.session_id}")
+                messages_req = c.get(f"{config.JAVA_API_URL}/internal/chat/sessions/{self.session_id}/messages",
                                      params={"limit": 200})
                 state_res, messages_res = await asyncio.gather(
                     state_req, messages_req, return_exceptions=True,
@@ -106,8 +106,8 @@ class SessionMemory:
             }
             if title:
                 payload["title"] = title[:128]
-            async with httpx.AsyncClient(timeout=5) as c:
-                r = await c.post(f"{config.JAVA_API_URL}/chat/sessions", json=payload)
+            async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
+                r = await c.post(f"{config.JAVA_API_URL}/internal/chat/sessions", json=payload)
                 r.raise_for_status()
                 self.exists = True
         except Exception as e:
@@ -116,8 +116,8 @@ class SessionMemory:
     async def append_message(self, role: str, content: str, meta: dict | None = None):
         """把可恢复的对话正文与展示元数据写入 Java 侧 chat_message。"""
         try:
-            async with httpx.AsyncClient(timeout=5) as c:
-                r = await c.post(f"{config.JAVA_API_URL}/chat/messages", json={
+            async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
+                r = await c.post(f"{config.JAVA_API_URL}/internal/chat/messages", json={
                     "sessionId": self.session_id,
                     "role": role,
                     "content": content,

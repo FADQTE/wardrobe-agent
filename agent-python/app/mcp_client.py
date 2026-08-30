@@ -50,7 +50,7 @@ def tool_by_name(name: str):
 
 
 async def _api(method: str, path: str, **kwargs):
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, headers=config.JAVA_INTERNAL_HEADERS) as client:
         response = await client.request(method, f"{config.JAVA_API_URL}{path}", **kwargs)
         response.raise_for_status()
         body = response.json()

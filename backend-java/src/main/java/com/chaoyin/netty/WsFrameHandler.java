@@ -2,6 +2,9 @@ package com.chaoyin.netty;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.chaoyin.entity.User;
+import com.chaoyin.service.AuthService;
+import com.chaoyin.service.ChatSessionService;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.*;
@@ -28,6 +31,8 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<Object> {
 
     private final WsSessionRegistry registry;
     private final ChatRelayService relay;
+    private final AuthService authService;
+    private final ChatSessionService chatSessionService;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private WebSocketServerHandshaker handshaker;
@@ -35,9 +40,12 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<Object> {
     private String sessionId;
     private Long userId = 1L;
 
-    public WsFrameHandler(WsSessionRegistry registry, ChatRelayService relay) {
+    public WsFrameHandler(WsSessionRegistry registry, ChatRelayService relay,
+                          AuthService authService, ChatSessionService chatSessionService) {
         this.registry = registry;
         this.relay = relay;
+        this.authService = authService;
+        this.chatSessionService = chatSessionService;
     }
 
     @Override
@@ -69,12 +77,21 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<Object> {
         }
         sessionId = first(qs.parameters(), "sessionId");
         String uid = first(qs.parameters(), "userId");
-        if (uid != null && !uid.isBlank()) {
-            userId = Long.parseLong(uid);
-        }
         if (sessionId == null || sessionId.isBlank()) {
-            ctx.writeAndFlush(new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.BAD_REQUEST));
-            ctx.close();
+            rejectHandshake(ctx, HttpResponseStatus.BAD_REQUEST);
+            return;
+        }
+        try {
+            User authenticated = authService.authenticate(first(qs.parameters(), "token"));
+            userId = authenticated.getId();
+            if (uid == null || !userId.equals(Long.parseLong(uid))
+                    || !chatSessionService.belongsTo(sessionId, userId)) {
+                rejectHandshake(ctx, HttpResponseStatus.FORBIDDEN);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("WS authentication failed for session={}: {}", sessionId, e.getMessage());
+            rejectHandshake(ctx, HttpResponseStatus.UNAUTHORIZED);
             return;
         }
         String url = "ws://" + req.headers().get(HttpHeaderNames.HOST) + req.uri();
@@ -153,5 +170,10 @@ public class WsFrameHandler extends SimpleChannelInboundHandler<Object> {
     private static String first(Map<String, List<String>> params, String key) {
         List<String> values = params.get(key);
         return values == null || values.isEmpty() ? null : values.get(0);
+    }
+
+    private static void rejectHandshake(ChannelHandlerContext ctx, HttpResponseStatus status) {
+        ctx.writeAndFlush(new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status))
+                .addListener(io.netty.channel.ChannelFutureListener.CLOSE);
     }
 }

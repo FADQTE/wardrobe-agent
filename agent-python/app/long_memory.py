@@ -156,7 +156,7 @@ async def store_candidates(user_id: int, candidates: list[dict], source_id: str 
             "scope": item.get("scope"),
         }
         try:
-            async with httpx.AsyncClient(timeout=5) as c:
+            async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
                 r = await c.post(f"{config.JAVA_API_URL}/memory/write", json=payload)
                 r.raise_for_status()
                 body = r.json().get("data") or {}
@@ -215,7 +215,7 @@ def wants_episodic_recall(message: str) -> bool:
 async def fetch_facts(user_id: int) -> list[dict]:
     """结构化事实/偏好：MySQL 精确查询（能精确查就不模糊搜），失败静默为空。"""
     try:
-        async with httpx.AsyncClient(timeout=5) as c:
+        async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
             r = await c.get(f"{config.JAVA_API_URL}/memory/facts", params={"userId": user_id})
             r.raise_for_status()
             return r.json().get("data") or []
@@ -240,7 +240,7 @@ def touch_memories(memory_ids: list):
     async def run():
         for memory_id in memory_ids:
             try:
-                async with httpx.AsyncClient(timeout=5) as c:
+                async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
                     await c.post(f"{config.JAVA_API_URL}/memory/{memory_id}/access")
             except Exception:
                 pass

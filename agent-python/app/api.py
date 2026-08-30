@@ -6,7 +6,7 @@ import asyncio
 import json
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -154,7 +154,27 @@ def _apply_latest_versions(rules: list[dict], docs: list[dict]) -> None:
 
 
 @router.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
+    # WS 请求只能来自 Java Relay；浏览器 SSE 则必须携带 Java 签发的 bearer token，
+    # 且 token 所属用户必须与请求 user_id 一致。
+    if req.transport == "ws":
+        if request.headers.get("X-Internal-Api-Key") != config.JAVA_INTERNAL_API_KEY:
+            raise HTTPException(status_code=401, detail="invalid internal credential")
+    else:
+        authorization = request.headers.get("Authorization", "")
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(
+                    f"{config.JAVA_API_URL}/auth/me",
+                    headers={"Authorization": authorization},
+                )
+            body = response.json()
+            authenticated_id = int((body.get("data") or {}).get("id") or 0)
+            if response.status_code != 200 or body.get("code") != 0 or authenticated_id != req.user_id:
+                raise ValueError("identity mismatch")
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail="login required") from exc
+
     async def gen():
         memory = None
         assistant_saved = False
@@ -184,7 +204,7 @@ async def chat(req: ChatRequest):
             async def push(ev):
                 """ws 模式：事件经 Java 内部接口推送到 Netty WS 网关（按 sessionId 隔离）。"""
                 try:
-                    async with httpx.AsyncClient(timeout=5) as c:
+                    async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
                         await c.post(f"{config.JAVA_API_URL}/internal/push",
                                      json={"sessionId": req.session_id, "event": ev})
                 except Exception as e:
@@ -273,7 +293,7 @@ async def chat(req: ChatRequest):
                 await memory.append_message("assistant", error_text, {"error": True})
             if req.transport == "ws":
                 try:
-                    async with httpx.AsyncClient(timeout=5) as c:
+                    async with httpx.AsyncClient(timeout=5, headers=config.JAVA_INTERNAL_HEADERS) as c:
                         await c.post(f"{config.JAVA_API_URL}/internal/push", json={
                             "sessionId": req.session_id,
                             "event": {"type": "error", "data": {"text": error_text}}})
@@ -317,7 +337,7 @@ class ReindexRequest(BaseModel):
 async def memory_fullsync():
     """兜底：从 MySQL 全量同步 active 记忆到 ES memory_index（索引只是检索层，MySQL 是事实源）。"""
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with httpx.AsyncClient(timeout=10, headers=config.JAVA_INTERNAL_HEADERS) as c:
             r = await c.get(f"{config.JAVA_API_URL}/memory/list",
                             params={"status": "active", "limit": 200})
             r.raise_for_status()
@@ -386,7 +406,7 @@ async def eval_run():
 async def rules_reindex(req: ReindexRequest):
     """规则发布联动：从 Java 拉取最新规则 → 增量更新索引 → 下架同族旧版本 → 失效缓存。"""
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with httpx.AsyncClient(timeout=10, headers=config.JAVA_INTERNAL_HEADERS) as c:
             r = await c.get(f"{config.JAVA_API_URL}/rules/{req.rule_id}")
             r.raise_for_status()
             rule = r.json()["data"]
@@ -409,7 +429,7 @@ async def rules_reindex(req: ReindexRequest):
 async def rules_fullsync():
     """兜底：从 Java 全量同步全部规则，修复漏通知、旧版状态与缓存。"""
     try:
-        async with httpx.AsyncClient(timeout=10) as c:
+        async with httpx.AsyncClient(timeout=10, headers=config.JAVA_INTERNAL_HEADERS) as c:
             r = await c.get(f"{config.JAVA_API_URL}/rules")
             r.raise_for_status()
             rules = r.json()["data"]
