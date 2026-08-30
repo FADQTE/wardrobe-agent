@@ -16,6 +16,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+SEASON_ALIAS = {"春季": "春", "夏季": "夏", "秋季": "秋", "冬季": "冬"}
+
+
+def normalize_tags(tags: Optional[list[str]]) -> list[str]:
+    """标签归一化：LLM 可能输出"秋季/春季"等全称，映射到知识库枚举（秋/春…）。"""
+    out = []
+    for t in tags or []:
+        out.append(SEASON_ALIAS.get(t, t))
+    return [t for t in dict.fromkeys(out) if t]
+
+
 def _tag_filters(tags: Optional[list[str]], prefix: str = "") -> list:
     if not tags:
         return []
@@ -38,6 +49,7 @@ def hybrid_product_search(keyword: str = "", category: str = "", color: str = ""
         filters.append({"term": {"category": category}})
     if color:
         filters.append({"term": {"color": color}})
+    season = SEASON_ALIAS.get(season, season) if season else ""
     if season:
         filters.append({"term": {"season": season}})
     if style:
@@ -70,6 +82,11 @@ def hybrid_product_search(keyword: str = "", category: str = "", color: str = ""
     products = [h["_source"] | {"id": int(h["_id"]), "score": h["_score"],
                                 "imageUrl": h["_source"].get("image_url")}
                 for h in resp["hits"]["hits"]]
+    # 兜底：颜色/季节/风格过滤过严导致零命中 → 去掉这三个条件重试（保留关键词/类目/价格）
+    if not products and (color or season or style):
+        return hybrid_product_search(keyword=keyword, category=category,
+                                     color="", season="", style="",
+                                     max_price=max_price, page=page, size=size)
     if min_score is not None and keyword:
         products = [p for p in products if p["score"] >= min_score]
     return {"products": products, "total": resp["hits"]["total"]["value"]}
@@ -109,6 +126,7 @@ def hybrid_rule_search(query: str, tags: Optional[list[str]] = None,
     if cached is not None:
         return cached
 
+    tags = normalize_tags(tags)
     es = get_es()
     must = []
     if query:
@@ -151,7 +169,11 @@ def hybrid_rule_search(query: str, tags: Optional[list[str]] = None,
             "effectiveFrom": ef, "effectiveTo": et,
             "timeValid": only_time_valid, "score": h["_score"],
         })
-    # 兜底：关键词零命中时回退返回当前全部有效规则（活动查询场景）
+    # 兜底1：标签过滤导致零命中 → 去掉标签重试（LLM 标签粒度可能过细）
+    if not rules and tags:
+        rules = hybrid_rule_search(query, tags=None, rule_type=rule_type,
+                                   only_time_valid=only_time_valid, size=size)
+    # 兜底2：关键词零命中时回退返回当前全部有效规则（活动查询场景）
     if fallback_all and not rules and query:
         rules = hybrid_rule_search("", tags=tags, rule_type=rule_type,
                                    only_time_valid=only_time_valid, size=size)

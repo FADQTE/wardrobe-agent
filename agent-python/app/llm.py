@@ -23,12 +23,19 @@ class LLMClient:
         return self._client
 
     def chat(self, system: str, user: str, temperature: Optional[float] = None) -> str:
-        resp = self._get().chat.completions.create(
-            model=self._model,
-            messages=[{"role": "system", "content": system},
-                      {"role": "user", "content": user}],
-            temperature=temperature if temperature is not None else config.LLM_TEMPERATURE,
-        )
+        kwargs: dict = {
+            "model": self._model,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+            "temperature": temperature if temperature is not None else config.LLM_TEMPERATURE,
+        }
+        # DeepSeek 思考模式：max → 开启思考并给足预算（reasoning_content 不进 content）
+        if config.LLM_THINKING in ("enabled", "max"):
+            thinking: dict = {"type": "enabled"}
+            if config.LLM_THINKING == "max":
+                thinking["budget_tokens"] = 16384
+            kwargs["extra_body"] = {"thinking": thinking}
+        resp = self._get().chat.completions.create(**kwargs)
         return resp.choices[0].message.content or ""
 
     def chat_json(self, system: str, user: str) -> dict:

@@ -214,13 +214,38 @@ def _compose_mock(state: AgentState) -> str:
 
 
 def _compose_llm(state: AgentState) -> str:
+    # Observation 压缩：只给模型回答所需的短摘要，不塞原始字段（防编造编号/价格）
+    results = []
+    for r in state.get("results", []):
+        if r.get("type") == "wardrobe" and r.get("ok"):
+            items = [{"name": i.get("name"), "color": i.get("color"),
+                      "season": i.get("season"), "style": i.get("style")}
+                     for i in r["data"].get("items", [])]
+            results.append({"type": "wardrobe", "items": items})
+        elif r.get("type") in ("rag", "rule_query") and r.get("ok"):
+            results.append({"type": r["type"], "rules": [
+                {"title": x.get("title"), "content": x.get("content"), "source": x.get("source")}
+                for x in r["data"].get("rules", [])]})
+        elif r.get("type") == "product" and r.get("ok"):
+            results.append({"type": "product", "products": [
+                {"name": p.get("name"), "price": p.get("price"), "color": p.get("color"),
+                 "style": p.get("style")} for p in r["data"].get("products", [])]})
+        elif r.get("type") == "order" and r.get("ok"):
+            results.append({"type": "order", "orderNo": r["data"].get("orderNo"),
+                            "status": r["data"].get("status")})
+        elif r.get("type") == "image" and r.get("ok"):
+            results.append({"type": "image", "label": r["data"].get("label")})
+        elif r.get("type") == "favorite" and r.get("ok"):
+            results.append({"type": "favorite", "count": len(r["data"].get("ids", []))})
     context = {
         "用户消息": state["message"],
         "会话记忆": state["memory_desc"],
-        "任务结果": [{k: v for k, v in r.items() if k != "events"} for r in state.get("results", [])],
+        "任务结果": results,
     }
     system = ("你是潮引智能衣橱商城的穿搭助手。根据任务结果给出简洁实用的搭配建议，"
-              "注明规则来源；语气亲切，中文回答，200 字以内。")
+              "注明规则来源；语气亲切，中文回答，200 字以内。"
+              "严格以工具结果为准：不要编造商品编号、价格、库存或规则内容；"
+              "工具没查到的事实不要补充。")
     try:
         return get_llm().chat(system, json.dumps(context, ensure_ascii=False, default=str))
     except Exception as e:

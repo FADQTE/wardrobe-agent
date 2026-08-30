@@ -24,7 +24,7 @@ cases:
     forbid_text: [失败]
   - id: c04_order
     name: 收藏与下单走 MCP 写操作
-    message: 把商城第一条商品收藏，并下单
+    message: 搜索商城在售的白色衬衫，把搜索结果第一条收藏，并下单
     must_events: [tool]
     must_tools: [hybrid_product_search, addFavorite, createOrder]
     forbid_text: [无法完成, 转接人工]

@@ -13,6 +13,8 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 MOCK_AGENT = os.getenv("MOCK_AGENT", "false").lower() == "true"
+# 思考强度：off | enabled | max（max 附带 16384 思考预算，DeepSeek thinking schema）
+LLM_THINKING = os.getenv("LLM_THINKING", "off")
 
 # Embedding
 EMBEDDING_MODE = os.getenv("EMBEDDING_MODE", "none")  # ollama | api | none
