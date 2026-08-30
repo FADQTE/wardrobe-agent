@@ -17,7 +17,7 @@ import com.chaoyin.service.AuthService;
 import com.chaoyin.service.ChatSessionService;
 
 /**
- * Netty NIO WebSocket 推送网关（独立端口 8090，与 Tomcat 8080 分离）：
+ * Netty NIO WebSocket 推送网关（独立端口 16547，与 Tomcat 16545 分离）：
  * 负责向浏览器推送模型回复、生图进度与工具状态事件，支持心跳、重连与会话隔离。
  */
 @Slf4j
@@ -29,7 +29,7 @@ public class NettyWsServer {
     private final AuthService authService;
     private final ChatSessionService chatSessionService;
 
-    @Value("${app.netty.port:8090}")
+    @Value("${app.netty.port:16547}")
     private int port;
 
     private EventLoopGroup bossGroup;

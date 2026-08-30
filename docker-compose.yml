@@ -7,8 +7,8 @@ services:
       MYSQL_DATABASE: chaoyin
       TZ: Asia/Shanghai
     ports:
-      # 本机 3306 已被本地 MySQL 占用，容器映射到 3307
-      - "3307:3306"
+      # 本机 3306 已被本地 MySQL 占用，容器映射到 16543
+      - "16543:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./scripts/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -29,7 +29,7 @@ services:
       - xpack.security.enabled=false
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
-      - "9200:9200"
+      - "16544:9200"
     volumes:
       - es-data:/usr/share/elasticsearch/data
     mem_limit: 1g

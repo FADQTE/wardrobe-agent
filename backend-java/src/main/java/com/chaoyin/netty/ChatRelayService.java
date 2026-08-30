@@ -27,7 +27,7 @@ public class ChatRelayService {
     private final ObjectMapper mapper = new ObjectMapper();
     private final ExecutorService executor = Executors.newFixedThreadPool(4);
 
-    @Value("${app.agent-url:http://localhost:8000}")
+    @Value("${app.agent-url:http://localhost:16546}")
     private String agentUrl;
 
     @Value("${app.internal-api-key:local-internal-key}")

@@ -1,4 +1,4 @@
-// 前端 API 封装：/api → Java 8080，/agent → Python 8000（vite 代理）
+// 前端 API 封装：/api → Java 16545，/agent → Python 16546（vite 代理）
 export const AUTH_TOKEN_KEY = 'app_auth_token'
 export const getAccessToken = () => localStorage.getItem(AUTH_TOKEN_KEY) || ''
 export const saveAccessToken = (token: string) => localStorage.setItem(AUTH_TOKEN_KEY, token)

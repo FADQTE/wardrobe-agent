@@ -16,7 +16,7 @@ PRODUCT_INDEX = "product_index"
 RULE_INDEX = "rule_index"
 MEMORY_INDEX = "memory_index"
 
-ES_URL = os.getenv("ES_URL", "http://localhost:9200")
+ES_URL = os.getenv("ES_URL", "http://localhost:16544")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
 
 

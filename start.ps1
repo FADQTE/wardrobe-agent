@@ -17,8 +17,8 @@ Write-Host '== 2/5 等待 MySQL / ES 就绪 ==' -ForegroundColor Cyan
 $ready = $false
 foreach ($i in 1..60) {
     $mysqlOk = $false; $esOk = $false
-    try { $mysqlOk = (Test-NetConnection -ComputerName localhost -Port 3307 -InformationLevel Quiet -WarningAction SilentlyContinue) } catch {}
-    try { $r = Invoke-WebRequest -Uri 'http://localhost:9200/_cluster/health' -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop; $esOk = ($r.StatusCode -eq 200) } catch {}
+    try { $mysqlOk = (Test-NetConnection -ComputerName localhost -Port 16543 -InformationLevel Quiet -WarningAction SilentlyContinue) } catch {}
+    try { $r = Invoke-WebRequest -Uri 'http://localhost:16544/_cluster/health' -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop; $esOk = ($r.StatusCode -eq 200) } catch {}
     if ($mysqlOk -and $esOk) { $ready = $true; break }
     Write-Host "  等待中... ($i/60)" -ForegroundColor DarkGray
     Start-Sleep -Seconds 3
@@ -38,15 +38,15 @@ if (-not (Test-Path "$root\agent-python\.venv")) {
 Write-Host '  检查种子数据（仅空库初始化，保留现有聊天与订单）...' -ForegroundColor DarkGray
 & "$root\agent-python\.venv\Scripts\python.exe" "$root\scripts\seed.py" --if-empty
 
-Write-Host '== 4/5 启动后端服务 (Spring Boot :8080 / Agent :8000 / Netty WS :8090) ==' -ForegroundColor Cyan
+Write-Host '== 4/5 启动后端服务 (Spring Boot :16545 / Agent :16546 / Netty WS :16547) ==' -ForegroundColor Cyan
 Start-Process powershell -ArgumentList '-NoExit','-Command',"`$env:JAVA_HOME='D:\jdk17'; Set-Location '$root\backend-java'; mvn -s '$root\.mvn\settings.xml' spring-boot:run"
-Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$root\agent-python'; uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
+Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$root\agent-python'; uv run uvicorn app.main:app --host 0.0.0.0 --port 16546"
 
-Write-Host '== 5/5 启动前端 (Vite :5173) ==' -ForegroundColor Cyan
+Write-Host '== 5/5 启动前端 (Vite :16548) ==' -ForegroundColor Cyan
 Start-Process powershell -ArgumentList '-NoExit','-Command',"Set-Location '$root\frontend'; pnpm dev"
 
 Write-Host ''
-Write-Host '完成! 打开 http://localhost:5173' -ForegroundColor Green
-Write-Host '  后端健康: http://localhost:8080/api/health' -ForegroundColor DarkGray
-Write-Host '  Agent健康: http://localhost:8000/health' -ForegroundColor DarkGray
-Write-Host '  Netty WS:  ws://localhost:8090/ws/chat' -ForegroundColor DarkGray
+Write-Host '完成! 打开 http://localhost:16548' -ForegroundColor Green
+Write-Host '  后端健康: http://localhost:16545/api/health' -ForegroundColor DarkGray
+Write-Host '  Agent健康: http://localhost:16546/health' -ForegroundColor DarkGray
+Write-Host '  Netty WS:  ws://localhost:16547/ws/chat' -ForegroundColor DarkGray

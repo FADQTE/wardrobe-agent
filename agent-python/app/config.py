@@ -39,9 +39,9 @@ HYBRID_VECTOR_WEIGHT = float(os.getenv("HYBRID_VECTOR_WEIGHT", "0.8"))
 HYBRID_CANDIDATE_WINDOW = int(os.getenv("HYBRID_CANDIDATE_WINDOW", "50"))
 
 # 基础设施
-ES_URL = os.getenv("ES_URL", "http://localhost:9200")
-JAVA_MCP_URL = os.getenv("JAVA_MCP_URL", "http://localhost:8080/mcp/sse")
-JAVA_API_URL = os.getenv("JAVA_API_URL", "http://localhost:8080/api")
+ES_URL = os.getenv("ES_URL", "http://localhost:16544")
+JAVA_MCP_URL = os.getenv("JAVA_MCP_URL", "http://localhost:16545/mcp/sse")
+JAVA_API_URL = os.getenv("JAVA_API_URL", "http://localhost:16545/api")
 JAVA_INTERNAL_API_KEY = os.getenv("APP_INTERNAL_API_KEY", "local-internal-key")
 JAVA_INTERNAL_HEADERS = {"X-Internal-Api-Key": JAVA_INTERNAL_API_KEY}
 

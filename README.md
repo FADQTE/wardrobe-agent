@@ -61,10 +61,10 @@
 
 访问地址：
 
-- 前端：http://localhost:5173
-- Java 服务：http://localhost:8080
-- Agent 服务：http://localhost:8000
-- WebSocket：ws://localhost:8090/ws/chat
+- 前端：http://localhost:16548
+- Java 服务：http://localhost:16545
+- Agent 服务：http://localhost:16546
+- WebSocket：ws://localhost:16547/ws/chat
 
 ## 手动启动
 
@@ -87,7 +87,7 @@ Agent 服务：
 cd agent-python
 uv sync
 Copy-Item .env.example .env
-uv run uvicorn app.main:app --port 8000
+uv run uvicorn app.main:app --port 16546
 ```
 
 前端：

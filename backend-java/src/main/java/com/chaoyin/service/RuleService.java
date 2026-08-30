@@ -25,7 +25,7 @@ public class RuleService {
     private final RuleMapper ruleMapper;
     private final RestTemplate restTemplate;
 
-    @Value("${app.agent-url:http://localhost:8000}")
+    @Value("${app.agent-url:http://localhost:16546}")
     private String agentUrl;
 
     public List<RuleEntity> list(String type, String status) {

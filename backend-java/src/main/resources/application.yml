@@ -1,11 +1,11 @@
 server:
-  port: 8080
+  port: 16545
 
 spring:
   application:
     name: wardrobe-service
   datasource:
-    url: jdbc:mysql://localhost:3307/chaoyin?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:16543/chaoyin?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -24,13 +24,13 @@ spring:
         sse-message-endpoint: /mcp/message
 
 app:
-  agent-url: http://localhost:8000
+  agent-url: http://localhost:16546
   # Agent 调 Java 业务接口时使用；生产环境必须通过环境变量覆盖。
   internal-api-key: ${APP_INTERNAL_API_KEY:local-internal-key}
   auth:
     token-hours: ${AUTH_TOKEN_HOURS:168}
   netty:
-    port: 8090
+    port: 16547
 
 mybatis-plus:
   configuration:

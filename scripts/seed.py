@@ -28,7 +28,7 @@ IMG_DIR = ROOT / "frontend" / "public" / "seed-images"
 IMG_DIR.mkdir(parents=True, exist_ok=True)
 
 MYSQL = dict(
-    host="localhost", port=3307, user="root", password="root",
+    host="localhost", port=16543, user="root", password="root",
     database="chaoyin", charset="utf8mb4",
 )
 
