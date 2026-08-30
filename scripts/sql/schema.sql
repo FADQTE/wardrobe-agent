@@ -11,6 +11,17 @@ CREATE TABLE IF NOT EXISTS `user` (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
+-- 登录令牌只保存 SHA-256 哈希；原始 bearer token 仅返回给登录客户端。
+CREATE TABLE IF NOT EXISTS user_auth_token (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user (user_id),
+  INDEX idx_expires (expires_at)
+) ENGINE=InnoDB;
+
 -- 个人衣橱：与商品同构标签（category/color/season/style/tags），打通衣橱↔商城
 CREATE TABLE IF NOT EXISTS wardrobe_item (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -145,7 +156,8 @@ CREATE TABLE IF NOT EXISTS chat_session (
   title VARCHAR(128),
   state JSON,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_user_updated (user_id, updated_at)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS chat_message (

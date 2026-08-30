@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { ConfigProvider, Layout, Menu, Avatar, message } from 'antd'
+import { ConfigProvider, Layout, Menu, Avatar, Dropdown, Spin } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import {
   AppstoreOutlined,
@@ -7,6 +7,7 @@ import {
   HddOutlined,
   RobotOutlined,
   ScheduleOutlined,
+  LogoutOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import WardrobePage from './pages/WardrobePage'
@@ -15,11 +16,12 @@ import ChatPage from './pages/ChatPage'
 import RulesPage from './pages/RulesPage'
 import ObservePage from './pages/ObservePage'
 import { createContext, useContext, useEffect, useState } from 'react'
-import { login, User } from './api'
+import { clearAccessToken, getAccessToken, getCurrentUser, LoginResult, logout, User } from './api'
+import LoginPage from './pages/LoginPage'
 
 const { Sider, Header, Content } = Layout
 
-export const UserContext = createContext<{ user: User | null }>({ user: null })
+export const UserContext = createContext<{ user: User | null; signOut: () => void }>({ user: null, signOut: () => {} })
 export const useUser = () => useContext(UserContext)
 
 const menuItems = [
@@ -32,20 +34,65 @@ const menuItems = [
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
+  const [authReady, setAuthReady] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
   // 当前菜单项 = 当前 URL 路径（刷新/前进后退/直接输入 URL 均保持一致）
-  const current = location.pathname
+  const current = location.pathname.startsWith('/chat') ? '/chat' : location.pathname
 
   useEffect(() => {
-    login('demo', 'demo123')
-      .then((u) => setUser(u))
-      .catch(() => message.warning('自动登录失败，请检查后端服务'))
+    let active = true
+    const restore = async () => {
+      if (!getAccessToken()) {
+        setAuthReady(true)
+        return
+      }
+      try {
+        const restored = await getCurrentUser()
+        if (active) setUser(restored)
+      } catch {
+        clearAccessToken()
+      } finally {
+        if (active) setAuthReady(true)
+      }
+    }
+    const expired = () => setUser(null)
+    window.addEventListener('cy-auth-expired', expired)
+    void restore()
+    return () => {
+      active = false
+      window.removeEventListener('cy-auth-expired', expired)
+    }
   }, [])
+
+  const handleAuthenticated = (result: LoginResult) => {
+    setUser(result.user)
+    setAuthReady(true)
+  }
+
+  const signOut = () => {
+    void logout().catch(() => undefined).finally(() => {
+      clearAccessToken()
+      setUser(null)
+      navigate('/chat', { replace: true })
+    })
+  }
+
+  if (!authReady) {
+    return <div className="app-loading"><Spin size="large" tip="正在恢复登录状态…" /></div>
+  }
+
+  if (!user) {
+    return (
+      <ConfigProvider locale={zhCN}>
+        <LoginPage onAuthenticated={handleAuthenticated} />
+      </ConfigProvider>
+    )
+  }
 
   return (
     <ConfigProvider locale={zhCN}>
-      <UserContext.Provider value={{ user }}>
+      <UserContext.Provider value={{ user, signOut }}>
         <Layout style={{ minHeight: '100vh' }}>
           <Sider theme="light" width={176}>
             <div style={{ padding: '14px 16px', fontSize: 16, fontWeight: 700, color: '#1677ff' }}>
@@ -72,15 +119,22 @@ export default function App() {
               <span style={{ fontSize: 15, fontWeight: 600 }}>
                 {menuItems.find((m) => m.key === current)?.label ?? '潮引智能衣橱商城'}
               </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#666' }}>
-                <Avatar size="small" icon={<UserOutlined />} />
-                {user?.nickname ?? '未登录'}（演示账号 demo）
-              </span>
+              <Dropdown
+                trigger={['click']}
+                menu={{ items: [{ key: 'logout', icon: <LogoutOutlined />, label: '退出登录', onClick: signOut }] }}
+              >
+                <button className="account-button" type="button">
+                  <Avatar size="small" src={user.avatar} icon={<UserOutlined />} />
+                  <span>{user.nickname || user.username}</span>
+                  <span className="account-username">@{user.username}</span>
+                </button>
+              </Dropdown>
             </Header>
             <Content style={{ padding: 16, overflow: 'auto' }}>
               <Routes>
                 <Route path="/" element={<Navigate to="/chat" replace />} />
                 <Route path="/chat" element={<ChatPage />} />
+                <Route path="/chat/:sessionId" element={<ChatPage />} />
                 <Route path="/wardrobe" element={<WardrobePage />} />
                 <Route path="/mall" element={<MallPage />} />
                 <Route path="/rules" element={<RulesPage />} />

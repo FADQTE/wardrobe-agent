@@ -13,3 +13,13 @@ CREATE TABLE IF NOT EXISTS after_sale (
   INDEX idx_user (user_id),
   INDEX idx_order (order_id)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS user_auth_token (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user (user_id),
+  INDEX idx_expires (expires_at)
+) ENGINE=InnoDB;

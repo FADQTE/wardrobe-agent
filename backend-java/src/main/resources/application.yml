@@ -25,6 +25,10 @@ spring:
 
 chaoyin:
   agent-url: http://localhost:8000
+  # Agent 调 Java 业务接口时使用；生产环境必须通过环境变量覆盖。
+  internal-api-key: ${CHAOYIN_INTERNAL_API_KEY:chaoyin-dev-internal-key}
+  auth:
+    token-hours: ${CHAOYIN_AUTH_TOKEN_HOURS:168}
   netty:
     port: 8090
 

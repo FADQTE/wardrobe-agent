@@ -1,12 +1,28 @@
 // 前端 API 封装：/api → Java 8080，/agent → Python 8000（vite 代理）
+export const AUTH_TOKEN_KEY = 'cy_auth_token'
+export const getAccessToken = () => localStorage.getItem(AUTH_TOKEN_KEY) || ''
+export const saveAccessToken = (token: string) => localStorage.setItem(AUTH_TOKEN_KEY, token)
+export const clearAccessToken = () => localStorage.removeItem(AUTH_TOKEN_KEY)
+
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = getAccessToken()
   const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers ?? {}),
+    },
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const body = await res.json()
-  if (body.code !== 0) throw new Error(body.msg || '请求失败')
+  const body = await res.json().catch(() => null)
+  if (!res.ok || body?.code !== 0) {
+    const code = body?.code ?? res.status
+    if (code === 401) {
+      clearAccessToken()
+      window.dispatchEvent(new Event('cy-auth-expired'))
+    }
+    throw new Error(body?.msg || `HTTP ${res.status}`)
+  }
   return body.data as T
 }
 
@@ -74,6 +90,21 @@ export interface Order {
   createdAt?: string
 }
 
+export interface LoginResult {
+  token: string
+  user: User
+  expiresAt: string
+}
+
+export interface ChatSession {
+  id: string
+  userId: number
+  title: string
+  state?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
 export interface OrderItem {
   id: number
   orderId: number
@@ -112,7 +143,15 @@ export interface PersistedChatMessage {
 
 // ---- 业务 API ----
 export const login = (username: string, password: string) =>
-  api<User>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+  api<LoginResult>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+
+export const register = (username: string, password: string, nickname?: string) =>
+  api<LoginResult>('/api/auth/register', {
+    method: 'POST', body: JSON.stringify({ username, password, nickname }),
+  })
+
+export const getCurrentUser = () => api<User>('/api/auth/me')
+export const logout = () => api<void>('/api/auth/logout', { method: 'POST' })
 
 export const listWardrobe = (userId: number) => api<WardrobeItem[]>(`/api/wardrobe?userId=${userId}`)
 
@@ -198,10 +237,23 @@ export const applyAfterSale = (userId: number, orderId: number, type = 'refund',
 export const getChatMessages = (sessionId: string) =>
   api<PersistedChatMessage[]>(`/api/chat/sessions/${encodeURIComponent(sessionId)}/messages`)
 
+export const listChatSessions = () => api<ChatSession[]>('/api/chat/sessions')
+export const createChatSession = () => api<ChatSession>('/api/chat/sessions', { method: 'POST' })
+export const renameChatSession = (sessionId: string, title: string) =>
+  api<ChatSession>(`/api/chat/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH', body: JSON.stringify({ title }),
+  })
+export const deleteChatSession = (sessionId: string) =>
+  api<void>(`/api/chat/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+
 export const uploadFile = async (file: File): Promise<string> => {
   const fd = new FormData()
   fd.append('file', file)
-  const res = await fetch('/api/upload', { method: 'POST', body: fd })
+  const token = getAccessToken()
+  const res = await fetch('/api/upload', {
+    method: 'POST', body: fd,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
   const body = await res.json()
   if (body.code !== 0) throw new Error(body.msg || '上传失败')
   return body.data.url

@@ -367,6 +367,7 @@ def seed_mysql(products, rules):
             cur.execute("DELETE FROM chat_message")
             cur.execute("DELETE FROM chat_session")
             cur.execute("DELETE FROM tryon_task")
+            cur.execute("DELETE FROM user_auth_token")
             cur.execute("DELETE FROM `user`")
             # 重置自增，保证 DB id 与 ES _id 一致（1..N）
             for t in ["wardrobe_item", "product", "rule", "orders", "order_item", "favorite", "after_sale"]:

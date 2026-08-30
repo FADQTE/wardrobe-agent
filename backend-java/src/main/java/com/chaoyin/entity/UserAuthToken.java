@@ -4,19 +4,16 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
-import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.time.LocalDateTime;
 
 @Data
-@TableName("`user`")
-public class User {
+@TableName("user_auth_token")
+public class UserAuthToken {
     @TableId(type = IdType.AUTO)
     private Long id;
-    private String username;
-    @JsonIgnore
-    private String password;
-    private String nickname;
-    private String avatar;
+    private Long userId;
+    private String tokenHash;
+    private LocalDateTime expiresAt;
     private LocalDateTime createdAt;
 }
